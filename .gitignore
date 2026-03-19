@@ -10,6 +10,7 @@ ui/out/
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # editor / OS
 .DS_Store
@@ -26,6 +27,9 @@ coverage/
 e2e/.e2e-state.json
 e2e/test-results/
 e2e/playwright-report/
+
+# o1js compilation cache
+cache/
 
 # misc
 *.log
