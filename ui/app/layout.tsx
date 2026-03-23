@@ -8,7 +8,8 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
-import { warmupWorker } from '@/lib/multisigClient';
+import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
+import LedgerSigningModal from '@/components/LedgerSigningModal';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
 function AppProvider({ children }: { children: React.ReactNode }) {
@@ -23,24 +24,33 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     (window as any).__e2ePathname = () => pathname;
   }, [router, pathname]);
 
-  const { wallet, isLoading: walletLoading, auroInstalled, connect, disconnect } =
-    useWallet();
+  const {
+    wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
+    auroInstalled, ledgerSupported,
+    connect, connectAuro, connectLedger, disconnect,
+  } = useWallet();
 
   const {
     state: multisig,
     contracts,
     owners,
     indexerStatus,
-    isLoading: multisigLoading,
     refreshState: refreshMultisig,
     selectContract,
   } = useMultisig();
 
   const {
     proposals,
-    isLoading: proposalsLoading,
     pendingCount,
   } = useTransactions(multisig?.address ?? null);
+
+  // Ledger signing popup state
+  const [ledgerSigning, setLedgerSigning] = useState(false);
+  const [ledgerContext, setLedgerContext] = useState<LedgerSigningContext>('signing');
+  useEffect(() => onLedgerSigningChange((signing, context) => {
+    setLedgerSigning(signing);
+    if (context) setLedgerContext(context);
+  }), []);
 
   // Global operation state for worker-based transactions
   const [isOperating, setIsOperating] = useState(false);
@@ -97,9 +107,14 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         pendingCount,
         indexerStatus,
         connect,
-        disconnect,
-        isLoading: walletLoading || multisigLoading || proposalsLoading,
+        connectAuro,
+        connectLedger,
+        disconnect: async () => { await disconnect(); clearBanner(); },
+        isLoading: walletLoading,
+        walletError,
+        clearWalletError,
         auroInstalled,
+        ledgerSupported,
         refreshMultisig,
         selectContract,
         isOperating,
@@ -107,6 +122,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         operationBanner,
         clearBanner,
         startOperation,
+        ledgerSigning,
       }}
     >
       <div className="flex min-h-screen">
@@ -120,6 +136,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           }}
         />
         <main className="flex-1 min-h-screen">{children}</main>
+        {ledgerSigning && <LedgerSigningModal context={ledgerContext} />}
       </div>
     </AppContext.Provider>
   );

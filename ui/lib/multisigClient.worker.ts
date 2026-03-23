@@ -6,14 +6,19 @@ import * as Comlink from 'comlink';
 import {
   Mina,
   Field,
-  Bool,
+  Scalar,
   UInt64,
   fetchAccount,
   AccountUpdate,
   PublicKey,
   PrivateKey,
   Signature,
+  sendZkapp,
+  Bool
 } from 'o1js';
+
+import Client from 'mina-signer';
+
 import {
   MinaGuard,
   TransactionProposal,
@@ -46,16 +51,23 @@ import {
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
 type SendTxFn = (txJson: string) => Promise<string | null>;
 
-/** Callback type for requesting a field signature from Auro wallet on the main thread. */
+/** Callback type for requesting a field signature from Auro or Ledger on the main thread.
+ *  Auro returns a base58 signature string; Ledger returns {field, scalar} decimal strings. */
 type SignFieldsFn = (
-  fields: Array<string | number>
-) => Promise<{ data: Array<string | number>; signature: string } | null>;
+  fields: Array<string>
+) => Promise<{ data: Array<string>; signature: string | { field: string; scalar: string } } | null>;
+
+/** Callback type for signing the fee payer commitment via Ledger on the main thread. */
+type SignFeePayerFn = (commitment: string) => Promise<{ field: string; scalar: string } | null>;
 
 /** Callback type for reporting step-based progress to the main thread. */
 type ProgressFn = (step: string) => void;
 
 const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
 const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
+
+// TODO: make fee configurable per network (e.g. from env or UI input)
+const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
 
 let compilePromise: Promise<void> | null = null;
 
@@ -64,11 +76,10 @@ let compilePromise: Promise<void> | null = null;
 // directly instead of delegating to the Auro wallet on the main thread.
 let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
 let skipProofs = false;
-const DEFAULT_FEE = 100_000_000; // 0.1 MINA — used when sending directly (test mode)
 
-/** Returns Mina.transaction sender arg — includes fee in test mode since Auro won't set it. */
+/** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
 function txSender(pub: InstanceType<typeof PublicKey>) {
-  return testPrivateKey ? { sender: pub, fee: DEFAULT_FEE } : pub;
+  return { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
 /** Contract state snapshot read directly from chain. */
@@ -147,7 +158,14 @@ async function signProposalHash(
   const signed = await signFn([hashAsFieldString]);
   if (!signed?.signature) return null;
   try {
-    return Signature.fromBase58(signed.signature);
+    if (typeof signed.signature === 'string') {
+      return Signature.fromBase58(signed.signature);
+    }
+    // Ledger returns {field, scalar} decimal strings
+    return Signature.fromObject({
+      r: Field(BigInt(signed.signature.field)),
+      s: Scalar.from(BigInt(signed.signature.scalar)),
+    });
   } catch {
     return null;
   }
@@ -318,6 +336,78 @@ function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   return typeof json === 'string' ? json : JSON.stringify(json);
 }
 
+/** mina-signer client for computing transaction commitments without o1js overhead. */
+const signerClient = new Client({
+  network: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
+});
+
+/** Signs the fee payer via Ledger and broadcasts directly to the Mina GraphQL endpoint. */
+async function broadcastWithLedgerSig(
+  txJson: string,
+  signFeePayerFn: SignFeePayerFn
+): Promise<string | null> {
+  const parsed = JSON.parse(txJson);
+  // mina-signer expects { feePayer, zkappCommand } wrapper; parsed is the raw tx JSON
+  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
+  const { fullCommitment } = signerClient.getZkappCommandCommitmentsNoCheck(wrapped);
+  const sig = await signFeePayerFn(fullCommitment.toString());
+  if (!sig) return null;
+
+  const sigBase58 = Signature.fromObject({
+    r: Field(BigInt(sig.field)),
+    s: Scalar.from(BigInt(sig.scalar)),
+  }).toBase58();
+
+  parsed.feePayer.authorization = sigBase58;
+
+  // Also sign any account updates owned by the fee payer that require a signature
+  // (e.g. fundNewAccount). These use fullCommitment when useFullCommitment is true.
+  const feePayerPk = parsed.feePayer.body.publicKey;
+  for (const update of parsed.accountUpdates ?? []) {
+    if (
+      update.body?.publicKey === feePayerPk &&
+      update.body?.authorizationKind?.isSigned === true &&
+      update.body?.useFullCommitment === true
+    ) {
+      update.authorization = { signature: sigBase58 };
+    }
+  }
+
+  const [response, error] = await sendZkapp(JSON.stringify(parsed));
+  if (error) {
+    console.error('[MultisigWorker] sendZkapp error:', error);
+    return null;
+  }
+  return response?.data?.sendZkapp?.zkapp?.hash ?? null;
+}
+
+/** Dispatches transaction submission to test mode, Ledger, or Auro. */
+async function submitTx(
+  tx: Awaited<ReturnType<typeof Mina.transaction>>,
+  sendFn: SendTxFn | null,
+  signFeePayerFn?: SignFeePayerFn,
+  extraKeys: InstanceType<typeof PrivateKey>[] = []
+): Promise<string | null> {
+  // E2E test mode: sign and send directly
+  if (testPrivateKey) {
+    return await signAndSend(tx, extraKeys);
+  }
+  // Sign with extra keys (e.g. zkApp key for deploy) before Auro/Ledger submission
+  if (extraKeys.length > 0) {
+    tx.sign(extraKeys);
+  }
+  const txJson = serializeTx(tx);
+  // Ledger path: sign fee payer via Ledger and broadcast directly
+  if (signFeePayerFn) {
+    return broadcastWithLedgerSig(txJson, signFeePayerFn);
+  }
+  // Auro path: send via Auro wallet
+  if (sendFn) {
+    return sendFn(txJson);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Public worker API exposed via Comlink
 // ---------------------------------------------------------------------------
@@ -340,8 +430,9 @@ const workerApi = {
 
   async deployContract(
     params: { feePayerAddress: string; zkAppPrivateKeyBase58: string },
-    sendFn: SendTxFn,
-    progressFn: ProgressFn
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     const ok = await compileContract();
@@ -353,22 +444,23 @@ const workerApi = {
     const zkAppAddress = zkAppKey.toPublicKey();
     const zkApp = new MinaGuard(zkAppAddress);
 
+    console.log('built');
+
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
     });
 
+    console.log('mina transaction constructed');
+
     progressFn('Generating proof...');
     await tx.prove();
 
-    if (testPrivateKey) {
-      progressFn('Signing and sending transaction...');
-      return await signAndSend(tx, [zkAppKey]);
-    }
+    console.log('proof done');
 
-    tx.sign([zkAppKey]);
-    progressFn('Submitting transaction...');
-    const deployHash = await sendFn(serializeTx(tx));
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const deployHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
+    console.log('[MultisigWorker] deploy tx result:', deployHash);
     return `Transaction submitted: ${deployHash}`;
   },
 
@@ -380,8 +472,9 @@ const workerApi = {
       threshold: number;
       networkId: string;
     },
-    sendFn: SendTxFn,
-    progressFn: ProgressFn
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     const ok = await compileContract();
@@ -405,7 +498,7 @@ const workerApi = {
       await zkApp.setup(
         ownerStore.getCommitment(),
         Field(params.threshold),
-        Field(ownerKeys.length),
+        Field(ownerStore.length),
         Field(params.networkId),
         new SetupOwnersInput({
           owners: paddedOwners.slice(0, MAX_OWNERS),
@@ -416,15 +509,8 @@ const workerApi = {
     progressFn('Generating proof...');
     await tx.prove();
 
-    if (testPrivateKey) {
-      progressFn('Signing and sending transaction...');
-      const txHash = await signAndSend(tx);
-      console.log('[MultisigWorker] setup tx result:', txHash);
-      return txHash;
-    }
-
-    progressFn('Submitting transaction...');
-    const txHash = await sendFn(serializeTx(tx));
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
     console.log('[MultisigWorker] setup tx result:', txHash);
     return `Transaction submitted: ${txHash}`;
   },
@@ -559,8 +645,9 @@ const workerApi = {
       executorAddress: string;
       proposal: Proposal;
     },
-    sendFn: SendTxFn,
-    progressFn: ProgressFn
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Fetching batch payload...');
     const payload = await fetchBatchPayload(
@@ -705,19 +792,15 @@ const workerApi = {
     progressFn('Generating proof...');
     await tx.prove();
 
-    if (testPrivateKey) {
-      progressFn('Signing and sending transaction...');
-      return await signAndSend(tx);
-    }
-
-    progressFn('Submitting transaction...');
-    return `Transaction submitted: ${await sendFn(serializeTx(tx))}`;
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
+    return `Transaction submitted: ${executeHash}`;
   },
 };
 
 export type WorkerApi = typeof workerApi;
 
 // Eagerly start compilation as soon as the worker loads
-compileContract().catch(() => {});
+compileContract().catch(() => { });
 
 Comlink.expose(workerApi);

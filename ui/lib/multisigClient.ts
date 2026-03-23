@@ -4,14 +4,38 @@
 
 import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
-import type { NewProposalInput, Proposal } from '@/lib/types';
+import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
+import { signFields as ledgerSignFields, signFeePayer } from '@/lib/ledgerWallet';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
 
+/** Configuration describing which wallet should sign fields. */
+export interface SignerConfig {
+  type: WalletType;
+  ledgerAccountIndex?: number;
+}
+
 /** Optional callback to receive step-based progress updates from the worker. */
 export type OnProgress = (step: string) => void;
+
+/** Context for the Ledger signing modal: 'connecting' for address retrieval, 'signing' for tx signing. */
+export type LedgerSigningContext = 'connecting' | 'signing';
+
+/** Listener called when Ledger signing state changes. */
+let ledgerSigningListener: ((signing: boolean, context?: LedgerSigningContext) => void) | null = null;
+
+/** Registers a callback that fires when Ledger device interaction starts/stops. */
+export function onLedgerSigningChange(fn: (signing: boolean, context?: LedgerSigningContext) => void): () => void {
+  ledgerSigningListener = fn;
+  return () => { ledgerSigningListener = null; };
+}
+
+/** Fires the Ledger signing listener (e.g. to show/hide the "Check Ledger" modal). */
+export function setLedgerSigning(signing: boolean, context?: LedgerSigningContext) {
+  ledgerSigningListener?.(signing, context);
+}
 
 let worker: Worker | null = null;
 let api: Comlink.Remote<WorkerApi> | null = null;
@@ -27,15 +51,39 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
   return api;
 }
 
-/** Proxied Auro sendTransaction callback for use inside the worker. */
-function proxiedSendTx() {
+/** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
+function proxiedSendTx(signer?: SignerConfig) {
+  if (signer?.type === 'ledger') return null;
   return Comlink.proxy((txJson: string) => sendTransaction(txJson));
 }
 
-/** Proxied Auro signFields callback for use inside the worker. */
-function proxiedSignFields() {
+/** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
+function proxiedSignFeePayer(signer?: SignerConfig) {
+  if (signer?.type !== 'ledger') return undefined;
+  return Comlink.proxy(async (commitment: string) => {
+    ledgerSigningListener?.(true, 'signing');
+    try {
+      return await signFeePayer(commitment, signer.ledgerAccountIndex);
+    } finally {
+      ledgerSigningListener?.(false);
+    }
+  });
+}
+
+/** Proxied signFields callback that dispatches to Auro or Ledger based on signer config. */
+function proxiedSignFields(signer?: SignerConfig) {
+  if (signer?.type === 'ledger') {
+    return Comlink.proxy(async (fields: Array<string>) => {
+      ledgerSigningListener?.(true, 'signing');
+      try {
+        return await ledgerSignFields(fields, signer.ledgerAccountIndex);
+      } finally {
+        ledgerSigningListener?.(false);
+      }
+    });
+  }
   return Comlink.proxy(
-    (fields: Array<string | number>) => getAuroSignFields(fields)
+    (fields: Array<string>) => getAuroSignFields(fields)
   );
 }
 
@@ -75,14 +123,14 @@ export async function generateKeypair(): Promise<{ privateKey: string; publicKey
 }
 
 /**
- * Deploys MinaGuard contract account update and submits it through Auro.
+ * Deploys MinaGuard contract account update and submits via Auro or Ledger.
  * The zkApp private key remains in browser memory for this call only.
  */
 export async function deployContract(params: {
   feePayerAddress: string;
   zkAppPrivateKeyBase58: string;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().deployContract(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().deployContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
 /** Submits setup transaction with fixed-size owner list and threshold/network bootstrap. */
@@ -92,8 +140,8 @@ export async function setupContract(params: {
   owners: string[];
   threshold: number;
   networkId: string;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().setupContract(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
 /** Creates an offchain proposal in the backend and submits the proposer's first signature. */
@@ -103,11 +151,11 @@ export async function createOffchainProposal(params: {
   input: NewProposalInput;
   configNonce: number;
   networkId: string;
-}, onProgress?: OnProgress): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   return getWorkerApi().createOffchainProposal(
     params,
-    proxiedSignFields(),
-    proxiedProgress(onProgress)
+    proxiedSignFields(signer),
+    proxiedProgress(onProgress),
   );
 }
 
@@ -116,10 +164,10 @@ export async function submitOffchainSignature(params: {
   contractAddress: string;
   signerAddress: string;
   proposalHash: string;
-}, onProgress?: OnProgress): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   return getWorkerApi().submitOffchainSignature(
     params,
-    proxiedSignFields(),
+    proxiedSignFields(signer),
     proxiedProgress(onProgress)
   );
 }
@@ -129,6 +177,6 @@ export async function executeBatchTx(params: {
   contractAddress: string;
   executorAddress: string;
   proposal: Proposal;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().executeBatchTx(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().executeBatchTx(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }

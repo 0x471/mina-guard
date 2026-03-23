@@ -9,6 +9,7 @@ import { truncateAddress, formatMina, type NewProposalInput } from '@/lib/types'
 import { setupContract, createOffchainProposal } from '@/lib/multisigClient';
 import { fetchBalance, fetchContract } from '@/lib/api';
 import ProposalForm from '@/components/ProposalForm';
+import LedgerConnectModal from '@/components/LedgerConnectModal';
 import Link from 'next/link';
 
 /** Dashboard overview page for selected contract and latest indexed proposals. */
@@ -20,9 +21,14 @@ export default function Dashboard() {
     proposals,
     indexerStatus,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
+    walletError,
+    clearWalletError,
     auroInstalled,
+    ledgerSupported,
     isOperating,
     operationLabel,
     operationBanner,
@@ -81,6 +87,7 @@ export default function Dashboard() {
     setShowSetup(false);
 
     const captured = { address: multisig.address, feePayer: wallet.address, owners: parsedOwners, threshold: Number(threshold), networkId };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Building setup transaction...', (onProgress) =>
       setupContract({
         zkAppAddress: captured.address,
@@ -88,7 +95,7 @@ export default function Dashboard() {
         owners: captured.owners,
         threshold: captured.threshold,
         networkId: captured.networkId,
-      }, onProgress)
+      }, onProgress, signer)
     );
   };
 
@@ -101,6 +108,7 @@ export default function Dashboard() {
     const proposerAddress = wallet.address;
     const networkId = multisig.networkId ?? '0';
     const fallbackConfigNonce = multisig.configNonce ?? 0;
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
     startOperation('Creating offchain proposal...', async (onProgress) => {
       // Fetch the latest configNonce directly before creating the proposal to
@@ -113,7 +121,7 @@ export default function Dashboard() {
         input: data,
         configNonce,
         networkId,
-      }, onProgress);
+      }, onProgress, signer);
     });
   };
 
@@ -126,7 +134,11 @@ export default function Dashboard() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 
@@ -154,7 +166,14 @@ export default function Dashboard() {
         )}
 
         {!wallet.connected ? (
-          <ConnectNotice onConnect={connect} auroInstalled={auroInstalled} />
+          <ConnectNotice
+            onConnectAuro={connectAuro}
+            onConnectLedger={connectLedger}
+            auroInstalled={auroInstalled}
+            ledgerSupported={ledgerSupported}
+            error={walletError}
+            onClearError={clearWalletError}
+          />
         ) : multisig ? (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -407,24 +426,66 @@ export default function Dashboard() {
 
 /** Connect-wallet empty state shown when no wallet session is active. */
 function ConnectNotice({
-  onConnect,
+  onConnectAuro,
+  onConnectLedger,
   auroInstalled,
+  ledgerSupported,
+  error,
+  onClearError,
 }: {
-  onConnect: () => void;
+  onConnectAuro: () => void;
+  onConnectLedger: (accountIndex?: number) => void;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
+  error: string | null;
+  onClearError: () => void;
 }) {
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
+
   return (
     <div className="text-center py-20">
       <h3 className="text-lg font-semibold mb-2">Connect your wallet</h3>
       <p className="text-sm text-safe-text mb-6 max-w-sm mx-auto">
-        Connect your Auro Wallet to create and approve MinaGuard proposals.
+        Connect with Auro Wallet or Ledger to create and approve MinaGuard proposals.
       </p>
-      <button
-        onClick={onConnect}
-        className="bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
-      >
-        {auroInstalled ? 'Connect Auro Wallet' : 'Install Auro Wallet'}
-      </button>
+      {error && (
+        <div className="flex items-center justify-center gap-2 mb-4 mx-auto max-w-md rounded-lg px-4 py-3 text-sm bg-red-500/10 text-red-400 border border-red-500/30">
+          <span>{error}</span>
+          <button onClick={onClearError} className="ml-2 shrink-0 hover:opacity-70">&times;</button>
+        </div>
+      )}
+      <div className="flex items-center justify-center gap-3">
+        <button
+          onClick={onConnectAuro}
+          className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          {auroInstalled ? 'Connect Auro' : 'Install Auro'}
+        </button>
+        {ledgerSupported && (
+          <button
+            onClick={() => setShowLedgerModal(true)}
+            className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold rounded-lg px-6 py-3 text-sm hover:bg-safe-hover transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            Connect Ledger
+          </button>
+        )}
+      </div>
+      {showLedgerModal && (
+        <LedgerConnectModal
+          onConfirm={(accountIndex, _networkId) => {
+            // TODO: wire networkId to Ledger signing calls
+            setShowLedgerModal(false);
+            onConnectLedger(accountIndex);
+          }}
+          onClose={() => setShowLedgerModal(false)}
+        />
+      )}
     </div>
   );
 }

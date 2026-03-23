@@ -41,9 +41,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Git checkout
         uses: actions/checkout@v6
-      - name: bun ci, build, & test
+        with:
+          submodules: true
+      - name: bun install, build, & test
         run: |
-          bun ci
+          bun install
           bun run build
           bun run test
         env:

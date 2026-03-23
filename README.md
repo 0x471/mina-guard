@@ -20,6 +20,9 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 ### First-time setup
 
 ```bash
+# Fetch submodule (fork of o1js, for now)
+git submodule update --init
+
 bun install
 
 # Build contracts (required by backend and UI)
@@ -31,6 +34,14 @@ cp backend/.env.example backend/.env
 # Generate Prisma client
 cd backend && bunx prisma generate && cd ..
 ```
+
+Prior to testing with lightnet, accounts must have funds. To fund them, add the
+public keys to `dev-helpers/.env` and run:
+```bash
+cd dev-helpers && bun run cli.ts lightnet-fund
+```
+
+**NOTE**: To test with a Ledger device, its public key (corresponding to the account index used) must be funded similarly. Only the public key is needed.
 
 ### Running
 

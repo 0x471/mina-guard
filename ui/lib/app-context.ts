@@ -25,9 +25,15 @@ export interface AppContextType {
   pendingCount: number;
   indexerStatus: IndexerStatus | null;
   connect: () => void;
+  connectAuro: () => void;
+  connectLedger: (accountIndex?: number) => void;
   disconnect: () => void;
   isLoading: boolean;
+  /** Wallet connection error message (e.g. Ledger errors). */
+  walletError: string | null;
+  clearWalletError: () => void;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
   refreshMultisig: () => Promise<void>;
   selectContract: (address: string) => Promise<void>;
   /** Whether a worker operation is currently running. */
@@ -41,10 +47,12 @@ export interface AppContextType {
   /** Starts a worker operation: shows spinner, runs fn, shows result banner, refreshes state.
    *  The fn receives an onProgress callback to update the spinner label mid-operation. */
   startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => void;
+  /** Whether the Ledger device is currently awaiting user interaction. */
+  ledgerSigning: boolean;
 }
 
 export const AppContext = createContext<AppContextType>({
-  wallet: { connected: false, address: null, network: null },
+  wallet: { connected: false, address: null, network: null, type: null },
   multisig: null,
   contracts: [],
   owners: [],
@@ -52,9 +60,14 @@ export const AppContext = createContext<AppContextType>({
   pendingCount: 0,
   indexerStatus: null,
   connect: () => {},
+  connectAuro: () => {},
+  connectLedger: () => {},
   disconnect: () => {},
   isLoading: false,
+  walletError: null,
+  clearWalletError: () => {},
   auroInstalled: false,
+  ledgerSupported: false,
   refreshMultisig: async () => {},
   selectContract: async () => {},
   isOperating: false,
@@ -62,6 +75,7 @@ export const AppContext = createContext<AppContextType>({
   operationBanner: null,
   clearBanner: () => {},
   startOperation: () => {},
+  ledgerSigning: false,
 });
 
 /** Hook wrapper for typed context consumption in client components. */

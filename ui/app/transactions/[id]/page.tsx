@@ -23,9 +23,12 @@ export default function TransactionDetailPage() {
     owners,
     proposals,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -61,12 +64,13 @@ export default function TransactionDetailPage() {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Signing proposal...', (onProgress) =>
       submitOffchainSignature({
         contractAddress: captured.contractAddress,
         signerAddress: captured.signerAddress,
         proposalHash: captured.proposalHash,
-      }, onProgress)
+      }, onProgress, signer)
     );
     router.push('/');
   };
@@ -76,12 +80,13 @@ export default function TransactionDetailPage() {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Building batch execute transaction...', (onProgress) =>
       executeBatchTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
-      }, onProgress)
+      }, onProgress, signer)
     );
     router.push('/');
   };
@@ -95,7 +100,11 @@ export default function TransactionDetailPage() {
           connected={wallet.connected}
           isLoading={isLoading}
           auroInstalled={auroInstalled}
+          ledgerSupported={ledgerSupported}
+          walletType={wallet.type}
           onConnect={connect}
+          onConnectAuro={connectAuro}
+          onConnectLedger={connectLedger}
           onDisconnect={disconnect}
         />
         <div className="p-6 text-center py-20">
@@ -114,7 +123,11 @@ export default function TransactionDetailPage() {
           connected={wallet.connected}
           isLoading={isLoading}
           auroInstalled={auroInstalled}
+          ledgerSupported={ledgerSupported}
+          walletType={wallet.type}
           onConnect={connect}
+          onConnectAuro={connectAuro}
+          onConnectLedger={connectLedger}
           onDisconnect={disconnect}
         />
         <div className="p-6 text-center py-20">
@@ -147,7 +160,11 @@ export default function TransactionDetailPage() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 
