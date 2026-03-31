@@ -11,7 +11,7 @@ import {
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
-import { submitOffchainSignature, executeBatchTx } from '@/lib/multisigClient';
+import { submitOffchainSignature, executeBatchTx, assertLedgerReady } from '@/lib/multisigClient';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -22,6 +22,7 @@ export default function TransactionDetailPage() {
     multisig,
     owners,
     proposals,
+    proposalsAddress,
     connect,
     connectAuro,
     connectLedger,
@@ -29,6 +30,7 @@ export default function TransactionDetailPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -38,13 +40,25 @@ export default function TransactionDetailPage() {
 
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
 
+  // If the selected contract changes, leave the detail page immediately
   useEffect(() => {
-    if (!multisig || !proposalHash) return;
+    if (!multisig) return;
+    // Contract switched — go to proposals list immediately
+    if (proposalsAddress !== null && proposalsAddress !== multisig.address) {
+      router.push('/transactions');
+      return;
+    }
+  }, [multisig, proposals, proposal, proposalsAddress, router]);
+
+  useEffect(() => {
+    if (!multisig || !proposal) return;
+    // Don't fetch until proposals have been loaded for the current contract
+    if (proposalsAddress !== multisig.address) return;
     (async () => {
       const rows = await fetchApprovals(multisig.address, proposalHash);
       setApprovalAddresses(rows.map((row) => row.approver));
     })();
-  }, [multisig, proposalHash]);
+  }, [multisig, proposal, proposalHash, proposalsAddress]);
 
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);
@@ -76,11 +90,17 @@ export default function TransactionDetailPage() {
   };
 
   /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
-  const handleExecute = () => {
+  const handleExecute = async () => {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Execute proposal', async () => { throw err; });
+      return;
+    }
     void startOperation('Building batch execute transaction...', async (onProgress) => {
       return await executeBatchTx({
         contractAddress: captured.contractAddress,
@@ -106,6 +126,8 @@ export default function TransactionDetailPage() {
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
           onDisconnect={disconnect}
+          network={wallet.network}
+          onNetworkChange={setWalletNetwork}
         />
         <div className="p-6 text-center py-20">
           <p className="text-safe-text">Connect wallet to view proposal details</p>
@@ -129,6 +151,8 @@ export default function TransactionDetailPage() {
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
           onDisconnect={disconnect}
+          network={wallet.network}
+          onNetworkChange={setWalletNetwork}
         />
         <div className="p-6 text-center py-20">
           <p className="text-safe-text">Proposal not found</p>
@@ -166,6 +190,8 @@ export default function TransactionDetailPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-3xl space-y-6">
@@ -227,7 +253,7 @@ export default function TransactionDetailPage() {
               <button
                 onClick={handleExecute}
                 disabled={isOperating}
-                className="flex-1 bg-blue-500 text-white font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
               </button>
@@ -259,7 +285,7 @@ function DetailRow({
   return (
     <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
       <span className="text-sm text-safe-text">{label}</span>
-      <span className={`text-sm ${mono ? 'font-mono' : ''}`}>{value}</span>
+      <span className={`text-sm ml-4 truncate ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }

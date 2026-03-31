@@ -7,8 +7,13 @@ import { MinaApp } from '@zondax/ledger-mina-js';
 let transport: Transport | null = null;
 let app: MinaApp | null = null;
 
-/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet */
-const LEDGER_NETWORK_ID = process.env.NEXT_PUBLIC_MINA_NETWORK === 'mainnet' ? 1 : 0;
+/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet. Defaults to testnet. */
+let ledgerNetworkId = 0;
+
+/** Updates the network ID used for Ledger signing at runtime. */
+export function setLedgerNetworkId(id: number): void {
+  ledgerNetworkId = id;
+}
 
 const LEDGER_SUCCESS = 9000;
 
@@ -91,6 +96,18 @@ async function getApp(): Promise<MinaApp> {
   return app;
 }
 
+/** Checks that the Ledger is connected, unlocked, and the Mina app is open. */
+export async function checkLedgerReady(): Promise<void> {
+  const ledger = await getApp();
+  let result;
+  try {
+    result = await ledger.getAppVersion();
+  } catch (err) {
+    throw toLedgerError(err);
+  }
+  assertLedgerSuccess(result);
+}
+
 /** Closes the active transport connection. */
 export async function disconnectLedger(): Promise<void> {
   if (transport) {
@@ -150,7 +167,7 @@ export async function signFeePayer(
   const bytes = fieldToBytes(BigInt(commitment));
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, LEDGER_NETWORK_ID, bytes);
+    result = await ledger.signFieldElement(accountIndex, ledgerNetworkId, bytes);
   } catch (err) {
     throw toLedgerError(err);
   }
@@ -172,7 +189,7 @@ export async function signFields(
 
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, LEDGER_NETWORK_ID, bytes);
+    result = await ledger.signFieldElement(accountIndex, ledgerNetworkId, bytes);
   } catch (err) {
     throw toLedgerError(err);
   }

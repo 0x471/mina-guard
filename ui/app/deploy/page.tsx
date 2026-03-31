@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import { useAppContext } from '@/lib/app-context';
-import { deployAndSetupContract, generateKeypair } from '@/lib/multisigClient';
+import { deployAndSetupContract, generateKeypair, assertLedgerReady } from '@/lib/multisigClient';
 
 /** Deploy page for initializing new MinaGuard contracts from browser wallet session. */
 export default function DeployPage() {
@@ -18,6 +18,7 @@ export default function DeployPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -28,7 +29,7 @@ export default function DeployPage() {
   // Setup fields
   const [ownerFields, setOwnerFields] = useState<string[]>(['']);
   const [threshold, setThreshold] = useState('1');
-  const [networkId, setNetworkId] = useState('1');
+  const [networkId, setNetworkId] = useState(wallet.network === 'mainnet' ? '1' : '0');
   const [formError, setFormError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
@@ -72,7 +73,7 @@ export default function DeployPage() {
     return null;
   };
 
-  const handleDeploy = () => {
+  const handleDeploy = async () => {
     const error = validate();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !keypair) return;
@@ -86,6 +87,12 @@ export default function DeployPage() {
       networkId,
     };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Deploy contract', async () => { throw err; });
+      return;
+    }
     void startOperation('Building deploy transaction...', async (onProgress) => {
       return await deployAndSetupContract(captured, onProgress, signer);
     });
@@ -107,6 +114,8 @@ export default function DeployPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-3xl space-y-6">
@@ -199,7 +208,7 @@ export default function DeployPage() {
                   className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
                 />
                 <p className="text-xs text-safe-text">
-                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Localnet: <code className="font-mono">0</code>
+                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Testnet: <code className="font-mono">0</code>
                 </p>
               </label>
             </div>

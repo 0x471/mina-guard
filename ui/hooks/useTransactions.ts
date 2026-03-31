@@ -1,13 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchProposals } from '@/lib/api';
 import { Proposal } from '@/lib/types';
 
 /** Polls backend proposal endpoints for the currently selected contract. */
 export function useTransactions(multisigAddress: string | null) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [proposalsAddress, setProposalsAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const addressRef = useRef(multisigAddress);
+  addressRef.current = multisigAddress;
 
   /** Pulls latest proposals for the active contract. */
   const refresh = useCallback(async () => {
@@ -19,13 +22,19 @@ export function useTransactions(multisigAddress: string | null) {
     setIsLoading(true);
     try {
       const rows = await fetchProposals(multisigAddress, { limit: 200, offset: 0 });
+      // Bail if the address changed while fetching
+      if (addressRef.current !== multisigAddress) return;
       setProposals(rows);
+      setProposalsAddress(multisigAddress);
     } finally {
       setIsLoading(false);
     }
   }, [multisigAddress]);
 
   useEffect(() => {
+    // Clear stale proposals immediately so consumers don't mix old data with the new address
+    setProposals([]);
+    setProposalsAddress(null);
     void refresh();
     const interval = setInterval(() => {
       void refresh();
@@ -38,6 +47,7 @@ export function useTransactions(multisigAddress: string | null) {
 
   return {
     proposals,
+    proposalsAddress,
     isLoading,
     pendingCount,
     refresh,

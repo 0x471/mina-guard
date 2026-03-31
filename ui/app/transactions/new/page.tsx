@@ -6,6 +6,7 @@ import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ProposalForm from '@/components/ProposalForm';
 import { type NewProposalInput, type TxType, TX_TYPES } from '@/lib/types';
+import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOffchainProposal } from '@/lib/multisigClient';
 import { fetchContract } from '@/lib/api';
 
@@ -32,6 +33,7 @@ function NewTransactionPageInner() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -80,9 +82,21 @@ function NewTransactionPageInner() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-2xl">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="flex items-center gap-1.5 text-sm text-safe-text/60 hover:text-safe-text mb-4 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Connect your wallet and select a contract to create proposals.</p>
@@ -93,19 +107,23 @@ function NewTransactionPageInner() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="flex flex-wrap gap-2">
               {TX_TYPES.map((type) => (
                 <button
                   key={type.value}
                   type="button"
                   onClick={() => setTxType(type.value)}
-                  className={`p-3 rounded-lg border text-sm text-left transition-colors ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
                     txType === type.value
-                      ? 'border-safe-green text-safe-green bg-safe-hover'
-                      : 'border-safe-border text-safe-text hover:border-safe-text'
+                      ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
+                      : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
                   }`}
                 >
+                  <TxTypeIcon icon={type.icon} className="w-4 h-4" />
                   {type.label}
+                  {txType === type.value && (
+                    <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
+                  )}
                 </button>
               ))}
             </div>
