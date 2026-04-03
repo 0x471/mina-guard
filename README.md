@@ -80,3 +80,59 @@ bun run --filter contracts build
 bun run --filter backend build
 bun run --filter ui build
 ```
+
+## PR Preview Environments
+
+Each PR targeting `main` gets an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner. Preview URLs follow the pattern `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`.
+
+Each stack includes: lightnet, PostgreSQL, backend, frontend, block explorer, and a Caddy reverse proxy.
+
+### Manual management
+
+```bash
+# From repo root
+./preview-env/preview.sh up <PR_NUMBER>    # deploy
+./preview-env/preview.sh down <PR_NUMBER>  # teardown
+./preview-env/preview.sh list              # show active previews
+```
+
+### Local development with Docker
+
+You can run the full stack locally without the server's Caddy:
+
+```bash
+PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
+  -f preview-env/docker-compose.preview.yml \
+  -f preview-env/docker-compose.local.yml \
+  -p local up -d --build
+```
+
+Access at `http://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `http://localhost:10001/preview/1/graphql`.
+
+Note: o1js compilation won't work over plain HTTP (requires COOP/COEP headers over HTTPS). To bypass this, launch Chrome with `--enable-features=SharedArrayBuffer`.
+
+```bash
+# Logs
+docker compose -p local logs -f            # all services
+docker compose -p local logs -f frontend   # frontend only
+docker compose -p local logs -f backend    # backend/indexer
+docker compose -p local logs -f lightnet   # mina node + archive
+
+# Tear down
+docker compose -p local down -v
+```
+
+### Architecture
+
+Requests hit the main Caddy (TLS + COOP/COEP headers) which reverse-proxies to a per-preview Caddy container that routes to individual services. COOP/COEP headers are set at the main Caddy level and upstream copies are stripped to prevent duplicates.
+
+### Server setup
+
+Preview routes are managed via the Caddy admin API (`localhost:2019`) — no sudo required. The self-hosted runner only needs Docker access (`docker` group).
+
+### Gotchas
+
+- **SharedArrayBuffer**: o1js WASM requires `crossOriginIsolated`, which needs COOP + COEP headers over HTTPS. Do not add `Cross-Origin-Resource-Policy: same-origin` — it blocks o1js blob URL sub-workers.
+- **Bun workspaces**: `ui/deps/` must be copied into Dockerfiles because `mina-signer` is a `file:` dependency.
+- **Minification disabled**: SWC/terser mangle BigInt ops used by o1js.
+- **Server limits**: ~2GB RAM per preview stack, max 2–3 concurrent previews on the 30GB server. Run `docker image prune -f` periodically.
