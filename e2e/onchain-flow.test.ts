@@ -46,7 +46,7 @@ test.beforeAll(async ({ browser }) => {
   accounts.forEach((a, i) =>
     log(`  Account ${i + 1}: ${a.publicKey}`)
   );
-
+  
   // Create a single page that will be reused for all tests
   sharedContext = await browser.newContext({ baseURL: netConfig.frontendUrl });
   sharedPage = await sharedContext.newPage();
@@ -1190,3 +1190,12 @@ test('25. Verify final state', async () => { const page = sharedPage;
   await dumpState(contractAddress);
   log('\n=== All 25 steps completed successfully! ===');
 });
+
+// ---------------------------------------------------------------------------
+// TODO: Restore tests 26-32 (CREATE_CHILD, finalize, ALLOCATE_CHILD,
+// RECLAIM_CHILD, DESTROY_CHILD, final-state verification) once worker-
+// recycling lands. The combined LOCAL + subaccount flow silently hangs
+// `tx.prove()` around the 20th proof; the 8 GB V8 heap bump tripled
+// runway but is not enough. Likely needs periodic page reload + persistent
+// VK cache to work.
+// ---------------------------------------------------------------------------
