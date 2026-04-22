@@ -5,6 +5,7 @@ import { prisma } from './db.js';
 import { loadConfig } from './config.js';
 import { MinaGuardIndexer } from './indexer.js';
 import { createApiRouter } from './routes.js';
+import { createAuthMiddleware } from './middleware/auth.js';
 
 /** Boots the Express API server and starts the polling chain indexer. */
 async function main(): Promise<void> {
@@ -16,6 +17,7 @@ async function main(): Promise<void> {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
+  app.use(createAuthMiddleware());
   app.use(createApiRouter(indexer, config));
 
   const server = app.listen(config.port, () => {
