@@ -149,6 +149,29 @@ export async function executeTransferViaBackend(params: {
 }
 
 /**
+ * Unified backend-proving execute dispatcher. Server routes on
+ * `proposal.txType` + `destination` to call the right zkApp method. Handles
+ * every execute* variant — no Auro round-trip because these methods are
+ * permissionless once the approval threshold is met.
+ */
+export async function executeViaBackend(params: {
+  proposal: BackendProposalInput;
+  childAddress?: string;
+  enabled?: boolean;
+}): Promise<{ txHash: string } | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/execute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    return body as { txHash: string };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
  * Backend-proving single-key delegate. UI collects the Auro signature of
  * the canonical 7-field message (produced by `signFields` on the main
  * thread) and hands it to the backend. Backend proves + submits.

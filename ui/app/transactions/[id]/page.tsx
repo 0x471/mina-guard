@@ -120,50 +120,23 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Building execute transaction...', async (onProgress) => {
-      // REMOTE child-lifecycle proposals (RECLAIM/DESTROY/ENABLE) execute on the
-      // child guard, not the parent. CREATE_CHILD finalizes via the wizard's
-      // "Finalize deployment" path, not from this generic execute button.
-      const isRemoteLifecycle =
-        captured.proposal.destination === 'remote' &&
-        captured.proposal.childAccount &&
-        (captured.proposal.txType === 'reclaimChild' ||
-          captured.proposal.txType === 'destroyChild' ||
-          captured.proposal.txType === 'enableChildMultiSig');
-
-      if (isRemoteLifecycle) {
-        const result = await executeChildLifecycleOnchain({
-          childAddress: captured.proposal.childAccount!,
-          parentAddress: captured.contractAddress,
-          executorAddress: captured.executorAddress,
-          proposal: captured.proposal,
-        }, onProgress, signer);
-        if (result) success = true;
-        return result;
-      }
-
       if (captured.proposal.txType === 'createChild') {
         return 'CREATE_CHILD proposals finalize via the parent detail page → Pending Subaccounts → Finalize deployment.';
       }
-
-      // TRANSFER uses the backend prover (no browser compile). Other LOCAL
-      // execute types (owner change, threshold change, delegate,
-      // allocate-to-children, recipient-allowlist updates) still use the
-      // WebWorker path until their backend endpoints ship.
-      if (captured.proposal.txType === 'transfer') {
-        const { executeTransferViaBackendPath } = await import('@/lib/multisigClient');
-        const result = await executeTransferViaBackendPath({
-          contractAddress: captured.contractAddress,
-          proposal: captured.proposal,
-        }, onProgress);
-        if (result) success = true;
-        return result;
-      }
-
-      const result = await executeProposalOnchain({
+      // Every execute* @method on MinaGuard is permissionless once threshold
+      // is met, so the backend can compile + prove + submit for all of them
+      // without ever asking the user to sign anything.
+      const { executeAnyViaBackend } = await import('@/lib/multisigClient');
+      const enabled =
+        captured.proposal.txType === 'enableChildMultiSig'
+          ? captured.proposal.data === '1'
+          : undefined;
+      const result = await executeAnyViaBackend({
         contractAddress: captured.contractAddress,
-        executorAddress: captured.executorAddress,
         proposal: captured.proposal,
-      }, onProgress, signer);
+        childAddress: captured.proposal.childAccount ?? undefined,
+        enabled,
+      }, onProgress);
       if (result) success = true;
       return result;
     });

@@ -277,6 +277,284 @@ export async function delegateSingleKey(
 }
 
 // ---------------------------------------------------------------------------
+// LOCAL execute* methods via backend prover (owner / threshold / delegate /
+// allocate / recipient-allowlist-update) and REMOTE child-lifecycle methods
+// (reclaim / destroy / enable-child-multi-sig).
+// ---------------------------------------------------------------------------
+
+export async function executeOwnerChangeBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { ownerStore, approvalStore } = await rebuildStores(input.proposal.guardAddress);
+  const proposalHash = proposal.hash();
+  const target = proposal.receivers[0].address;
+  const pred = ownerStore.sortedPredecessor(target);
+  const insertAfter = pred
+    ? new PublicKeyOption({ value: pred, isSome: Bool(true) })
+    : PublicKeyOption.none();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeOwnerChange(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalStore.getCount(proposalHash),
+        ownerStore.getWitness(),
+        insertAfter,
+      );
+    },
+  );
+  console.log('[tx-service] proving executeOwnerChange...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeThresholdChangeBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { approvalStore } = await rebuildStores(input.proposal.guardAddress);
+  const proposalHash = proposal.hash();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeThresholdChange(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalStore.getCount(proposalHash),
+        Field(input.proposal.data),
+      );
+    },
+  );
+  console.log('[tx-service] proving executeThresholdChange...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeDelegateBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { approvalStore } = await rebuildStores(input.proposal.guardAddress);
+  const proposalHash = proposal.hash();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeDelegate(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalStore.getCount(proposalHash),
+      );
+    },
+  );
+  console.log('[tx-service] proving executeDelegate (multisig)...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeAllocateToChildrenBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { approvalStore } = await rebuildStores(input.proposal.guardAddress);
+  const proposalHash = proposal.hash();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeAllocateToChildren(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalStore.getCount(proposalHash),
+      );
+    },
+  );
+  console.log('[tx-service] proving executeAllocateToChildren...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeUpdateRecipientAllowlistBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { approvalStore, recipientAllowlistStore } = await rebuildStores(input.proposal.guardAddress);
+  const proposalHash = proposal.hash();
+  const recipient = proposal.receivers[0].address;
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeUpdateRecipientAllowlist(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalStore.getCount(proposalHash),
+        recipientAllowlistStore.getWitness(recipient),
+        recipientAllowlistStore.getValue(recipient),
+      );
+    },
+  );
+  console.log('[tx-service] proving executeUpdateRecipientAllowlist...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+/**
+ * REMOTE child-lifecycle executes run on the CHILD guard, reading parent's
+ * approval state cross-contract. Backend pulls the parent's approval
+ * witness + the child's childExecutionRoot map.
+ */
+export async function executeReclaimToParentBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput; childAddress: string },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const parentAddress = input.proposal.guardAddress;
+  const { approvalStore: parentApprovalStore } = await rebuildStores(parentAddress);
+  const childExecMap = await rebuildChildExecutionMap(input.childAddress);
+  const proposalHash = proposal.hash();
+  const amount = UInt64.from(input.proposal.data);
+  const feePayer = await acquireLightnetFeePayer(config);
+  const childPk = PublicKey.fromBase58(input.childAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
+  await fetchAccount({ publicKey: childPk });
+  const childApp = new MinaGuard(childPk);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await childApp.executeReclaimToParent(
+        proposal,
+        parentApprovalStore.getWitness(proposalHash),
+        parentApprovalStore.getCount(proposalHash),
+        childExecMap.getWitness(proposalHash),
+        amount,
+      );
+    },
+  );
+  console.log('[tx-service] proving executeReclaimToParent...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeDestroyBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput; childAddress: string },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const parentAddress = input.proposal.guardAddress;
+  const { approvalStore: parentApprovalStore } = await rebuildStores(parentAddress);
+  const childExecMap = await rebuildChildExecutionMap(input.childAddress);
+  const proposalHash = proposal.hash();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const childPk = PublicKey.fromBase58(input.childAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
+  await fetchAccount({ publicKey: childPk });
+  const childApp = new MinaGuard(childPk);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await childApp.executeDestroy(
+        proposal,
+        parentApprovalStore.getWitness(proposalHash),
+        parentApprovalStore.getCount(proposalHash),
+        childExecMap.getWitness(proposalHash),
+      );
+    },
+  );
+  console.log('[tx-service] proving executeDestroy...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+export async function executeEnableChildMultiSigBackend(
+  config: BackendConfig,
+  input: { proposal: ProposalInput; childAddress: string; enabled: boolean },
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const parentAddress = input.proposal.guardAddress;
+  const { approvalStore: parentApprovalStore } = await rebuildStores(parentAddress);
+  const childExecMap = await rebuildChildExecutionMap(input.childAddress);
+  const proposalHash = proposal.hash();
+  const enabledField = input.enabled ? Field(1) : Field(0);
+  const feePayer = await acquireLightnetFeePayer(config);
+  const childPk = PublicKey.fromBase58(input.childAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
+  await fetchAccount({ publicKey: childPk });
+  const childApp = new MinaGuard(childPk);
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await childApp.executeEnableChildMultiSig(
+        proposal,
+        parentApprovalStore.getWitness(proposalHash),
+        parentApprovalStore.getCount(proposalHash),
+        childExecMap.getWitness(proposalHash),
+        enabledField,
+      );
+    },
+  );
+  console.log('[tx-service] proving executeEnableChildMultiSig...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  return { txHash: pending.hash };
+}
+
+// ---------------------------------------------------------------------------
 // Multisig: propose / approve / executeTransfer via backend prover.
 // The user's Auro signs the proposalHash (one Field — Ledger-compatible).
 // Backend reads EventRaw rows from Prisma to rebuild the off-chain stores,
@@ -520,6 +798,30 @@ export async function approveBackend(
     throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
   }
   return { txHash: pending.hash };
+}
+
+/**
+ * Rebuilds the `childExecutionRoot` MerkleMap for a child guard from its
+ * indexed REMOTE execution events. Used by executeReclaim/Destroy/EnableChildMultiSig.
+ */
+async function rebuildChildExecutionMap(childAddress: string): Promise<MerkleMap> {
+  const map = new MerkleMap();
+  const child = await prisma.contract.findUnique({ where: { address: childAddress } });
+  if (!child) return map;
+  const events = await prisma.eventRaw.findMany({
+    where: { contractId: child.id, eventType: 'execution' },
+    orderBy: { blockHeight: 'asc' },
+  });
+  for (const e of events) {
+    const p = JSON.parse(e.payload) as Record<string, unknown>;
+    const txType = p.txType;
+    const hash = p.proposalHash;
+    const isRemote = typeof txType === 'string' && (txType === '7' || txType === '8' || txType === '9');
+    if (isRemote && typeof hash === 'string') {
+      map.set(Field(hash), EXECUTED_MARKER);
+    }
+  }
+  return map;
 }
 
 export interface ExecuteTransferBackendInput {

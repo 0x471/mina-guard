@@ -301,7 +301,77 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
   }));
 
-  /** Backend-proving executeTransfer. Other execute* types still use worker. */
+  /**
+   * Backend-proving dispatcher for every execute* @method on MinaGuard.
+   * The UI sends a single POST per proposal; server picks the right zkApp
+   * method based on `proposal.txType` (and `destination` for child-lifecycle).
+   *
+   * LOCAL txTypes: executeTransfer / executeOwnerChange / executeThresholdChange
+   * / executeDelegate / executeAllocateToChildren / executeUpdateRecipientAllowlist
+   * REMOTE txTypes: executeReclaimToParent / executeDestroy /
+   * executeEnableChildMultiSig (run on the child guard, need childAddress).
+   */
+  router.post('/api/tx/execute', safe(async (req, res) => {
+    if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
+    const body = (req.body ?? {}) as {
+      proposal?: { txType?: string; destination?: string; childAccount?: string } & Record<string, unknown>;
+      childAddress?: string;
+      enabled?: boolean;
+    };
+    if (!body.proposal || typeof body.proposal.txType !== 'string') {
+      res.status(400).json({ error: 'proposal required' });
+      return;
+    }
+    const txType = body.proposal.txType;
+    const destination = body.proposal.destination;
+    const childAddress = typeof body.childAddress === 'string' && body.childAddress
+      ? body.childAddress
+      : (typeof body.proposal.childAccount === 'string' ? body.proposal.childAccount : '');
+    const svc = await import('./tx-service.js');
+    try {
+      let result: { txHash: string };
+      if (destination === '1' || destination === 'remote') {
+        if (!childAddress) { res.status(400).json({ error: 'childAddress required for REMOTE' }); return; }
+        if (txType === '7') {
+          result = await svc.executeReclaimToParentBackend(config, { proposal: body.proposal as never, childAddress });
+        } else if (txType === '8') {
+          result = await svc.executeDestroyBackend(config, { proposal: body.proposal as never, childAddress });
+        } else if (txType === '9') {
+          result = await svc.executeEnableChildMultiSigBackend(config, {
+            proposal: body.proposal as never,
+            childAddress,
+            enabled: body.enabled !== false,
+          });
+        } else {
+          res.status(400).json({ error: `REMOTE txType ${txType} not executable via backend (use wizard for CREATE_CHILD)` });
+          return;
+        }
+      } else {
+        // LOCAL
+        if (txType === '0') {
+          result = await svc.executeTransferBackend(config, { proposal: body.proposal as never });
+        } else if (txType === '1' || txType === '2') {
+          result = await svc.executeOwnerChangeBackend(config, { proposal: body.proposal as never });
+        } else if (txType === '3') {
+          result = await svc.executeThresholdChangeBackend(config, { proposal: body.proposal as never });
+        } else if (txType === '4') {
+          result = await svc.executeDelegateBackend(config, { proposal: body.proposal as never });
+        } else if (txType === '6') {
+          result = await svc.executeAllocateToChildrenBackend(config, { proposal: body.proposal as never });
+        } else if (txType === '10' || txType === '11') {
+          result = await svc.executeUpdateRecipientAllowlistBackend(config, { proposal: body.proposal as never });
+        } else {
+          res.status(400).json({ error: `Unknown LOCAL txType ${txType}` });
+          return;
+        }
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }));
+
+  /** Back-compat alias for the original executeTransfer-only endpoint. */
   router.post('/api/tx/execute-transfer', safe(async (req, res) => {
     if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
     const body = (req.body ?? {}) as { proposal?: unknown };

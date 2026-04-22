@@ -259,6 +259,37 @@ export async function executeTransferViaBackendPath(params: {
 }
 
 /**
+ * Unified backend-proving execute path. Dispatches on proposal.txType /
+ * destination server-side — handles every @method except propose/approve/
+ * single-key-delegate (which need the user's signature) and CREATE_CHILD
+ * (finalized via the wizard's separate deployAndSetupChild flow).
+ *
+ * Execute methods are permissionless in the contract — no Auro prompt.
+ */
+export async function executeAnyViaBackend(params: {
+  contractAddress: string;
+  proposal: Proposal;
+  childAddress?: string;
+  enabled?: boolean;
+}, onProgress?: OnProgress): Promise<string | null> {
+  const { executeViaBackend } = await import('./api');
+  const progress = proxiedProgress(onProgress);
+  progress('Serializing proposal...');
+  const { proposalJson } = await getWorkerApi().serializeIndexedProposalForBackend({
+    proposal: params.proposal,
+    fallbackGuardAddress: params.contractAddress,
+  });
+  progress('Submitting to backend prover...');
+  const result = await executeViaBackend({
+    proposal: proposalJson as never,
+    childAddress: params.childAddress,
+    enabled: params.enabled,
+  });
+  if ('error' in result) throw new Error(result.error);
+  return result.txHash;
+}
+
+/**
  * Rotates a guard's staking delegate using its committed delegation key.
  * The connected wallet must be that delegation key. Delegate = null/empty
  * means "undelegate to self." Ledger is not supported on this path —
