@@ -227,6 +227,10 @@ export class MinaGuard extends SmartContract {
   @state(PublicKey) parent = State<PublicKey>();
   @state(Field) childExecutionRoot = State<Field>();
   @state(Field) childMultiSigEnabled = State<Field>();
+  @state(Field) delegationKeyHash = State<Field>();
+  @state(Field) delegationNonce = State<Field>();
+  @state(Field) recipientAllowlistRoot = State<Field>();
+  @state(Field) enforceRecipientAllowlist = State<Field>();
 
   events = {
     deployed: DeployEvent,
