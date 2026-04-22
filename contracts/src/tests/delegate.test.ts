@@ -25,6 +25,7 @@ describe('MinaGuard - Delegate', () => {
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -49,6 +50,7 @@ describe('MinaGuard - Delegate', () => {
     const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 1);
+    await approveTransaction(ctx, proposal1, 2);
 
     const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash1);
     const txn1 = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -69,6 +71,7 @@ describe('MinaGuard - Delegate', () => {
     const proposal2 = createUndelegateProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 1);
+    await approveTransaction(ctx, proposal2, 2);
 
     const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash2);
     // Pass any PublicKey for delegate param - contract ignores it for un-delegation
