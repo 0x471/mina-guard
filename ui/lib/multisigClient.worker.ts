@@ -266,9 +266,11 @@ async function rebuildStoresFromBackend(contractAddress: string) {
       const proposalHash = payload.proposalHash;
       const proposer = payload.proposer;
       if (typeof proposalHash === 'string') {
-        approvalStore.setCount(Field(proposalHash), PROPOSED_MARKER.add(1));
+        // SOD: propose stores PROPOSED_MARKER (0 approvals). The proposer's
+        // signature does not count as a vote — the proposer is still
+        // blocked from approving via the vote-nullifier write below.
+        approvalStore.setCount(Field(proposalHash), PROPOSED_MARKER);
       }
-      // The contract's propose() also nullifies the proposer's vote
       if (
         typeof proposalHash === 'string' &&
         typeof proposer === 'string' &&

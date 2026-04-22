@@ -12,12 +12,25 @@ import {
 } from 'o1js';
 import {
   MinaGuard,
+  Receiver,
+  TransactionProposal,
   SetupOwnersInput,
+  RecipientAllowlistCheck,
+  RecipientAllowlistStore,
   OwnerStore,
+  ApprovalStore,
+  VoteNullifierStore,
+  PublicKeyOption,
   MAX_OWNERS,
+  MAX_RECEIVERS,
   EMPTY_MERKLE_MAP_ROOT,
+  EXECUTED_MARKER,
+  PROPOSED_MARKER,
+  Destination,
 } from 'contracts';
+import { Bool, MerkleMap } from 'o1js';
 import type { BackendConfig } from './config.js';
+import { prisma } from './db.js';
 
 /**
  * Backend-side proving for MinaGuard. Moves the heavy `MinaGuard.compile()`
@@ -261,4 +274,307 @@ export async function delegateSingleKey(
     txHash: pending.hash,
     feePayerAddress: feePayer.pub.toBase58(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Multisig: propose / approve / executeTransfer via backend prover.
+// The user's Auro signs the proposalHash (one Field — Ledger-compatible).
+// Backend reads EventRaw rows from Prisma to rebuild the off-chain stores,
+// constructs + proves + submits. Only executeTransfer is covered here in
+// this slice; other execute* variants can follow the same pattern.
+// ---------------------------------------------------------------------------
+
+interface ReceiverInput { address: string; amount: string }
+
+export interface ProposalInput {
+  receivers: ReceiverInput[];
+  tokenId: string;
+  txType: string;        // Field value as decimal string ("0"=TRANSFER, etc)
+  data: string;
+  uid: string;
+  configNonce: string;
+  expiryBlock: string;
+  networkId: string;
+  guardAddress: string;
+  destination: string;   // "0" local, "1" remote
+  childAccount: string;  // base58 or empty
+}
+
+function buildProposalStruct(input: ProposalInput): TransactionProposal {
+  const receivers: InstanceType<typeof Receiver>[] = [];
+  for (let i = 0; i < MAX_RECEIVERS; i++) {
+    const r = input.receivers[i];
+    if (r && r.address && r.address !== PublicKey.empty().toBase58()) {
+      receivers.push(
+        new Receiver({
+          address: PublicKey.fromBase58(r.address),
+          amount: UInt64.from(r.amount || '0'),
+        }),
+      );
+    } else {
+      receivers.push(Receiver.empty());
+    }
+  }
+  return new TransactionProposal({
+    receivers,
+    tokenId: Field(input.tokenId),
+    txType: Field(input.txType),
+    data: Field(input.data),
+    uid: Field(input.uid),
+    configNonce: Field(input.configNonce),
+    expiryBlock: Field(input.expiryBlock),
+    networkId: Field(input.networkId),
+    guardAddress: PublicKey.fromBase58(input.guardAddress),
+    destination: Field(input.destination),
+    childAccount: input.childAccount && input.childAccount !== PublicKey.empty().toBase58()
+      ? PublicKey.fromBase58(input.childAccount)
+      : PublicKey.empty(),
+  });
+}
+
+/**
+ * Replays the contract's EventRaw rows to reconstruct the off-chain stores
+ * (owners / approvals / vote nullifiers). Mirrors the UI worker's
+ * `rebuildStoresFromBackend` but talks to Prisma directly.
+ */
+async function rebuildStores(contractAddress: string): Promise<{
+  ownerStore: OwnerStore;
+  approvalStore: ApprovalStore;
+  nullifierStore: VoteNullifierStore;
+  recipientAllowlistStore: RecipientAllowlistStore;
+}> {
+  const ownerStore = new OwnerStore();
+  const approvalStore = new ApprovalStore();
+  const nullifierStore = new VoteNullifierStore();
+  const recipientAllowlistStore = new RecipientAllowlistStore();
+
+  const contract = await prisma.contract.findUnique({ where: { address: contractAddress } });
+  if (!contract) throw new Error(`Contract ${contractAddress} not indexed`);
+
+  const events = await prisma.eventRaw.findMany({
+    where: { contractId: contract.id },
+    orderBy: { blockHeight: 'asc' },
+  });
+
+  const emptyKey = PublicKey.empty().toBase58();
+  const setupOwners = events
+    .filter((e) => e.eventType === 'setupOwner')
+    .map((e) => {
+      const p = JSON.parse(e.payload) as Record<string, unknown>;
+      return typeof p.owner === 'string' ? p.owner : null;
+    })
+    .filter((o): o is string => !!o && o.length > 10 && o !== emptyKey)
+    .sort();
+  for (const o of setupOwners) ownerStore.addSorted(PublicKey.fromBase58(o));
+
+  for (const event of events) {
+    const p = JSON.parse(event.payload) as Record<string, unknown>;
+    if (event.eventType === 'ownerChange') {
+      const owner = p.owner;
+      const added = p.added;
+      if (typeof owner === 'string' && owner.length > 10) {
+        if (added === '1' || added === 1) ownerStore.addSorted(PublicKey.fromBase58(owner));
+        else ownerStore.remove(PublicKey.fromBase58(owner));
+      }
+      continue;
+    }
+    if (event.eventType === 'proposal') {
+      const hash = p.proposalHash;
+      const proposer = p.proposer;
+      if (typeof hash === 'string') {
+        approvalStore.setCount(Field(hash), PROPOSED_MARKER);
+      }
+      if (typeof hash === 'string' && typeof proposer === 'string' && proposer.length > 10) {
+        nullifierStore.nullify(Field(hash), PublicKey.fromBase58(proposer));
+      }
+      continue;
+    }
+    if (event.eventType === 'approval') {
+      const hash = p.proposalHash;
+      const approver = p.approver;
+      const count = p.approvalCount;
+      if (typeof hash === 'string' && typeof count === 'string') {
+        approvalStore.setCount(Field(hash), Field(count));
+      }
+      if (typeof hash === 'string' && typeof approver === 'string' && approver.length > 10) {
+        nullifierStore.nullify(Field(hash), PublicKey.fromBase58(approver));
+      }
+      continue;
+    }
+    if (event.eventType === 'execution') {
+      const hash = p.proposalHash;
+      const txType = p.txType;
+      const isRemote = typeof txType === 'string' && (txType === '5' || txType === '7' || txType === '8' || txType === '9');
+      if (typeof hash === 'string' && !isRemote) {
+        approvalStore.setCount(Field(hash), EXECUTED_MARKER);
+      }
+      continue;
+    }
+    if (event.eventType === 'recipientAllowlistChange') {
+      const recipient = p.recipient;
+      const added = p.added;
+      if (typeof recipient === 'string' && recipient.length > 10) {
+        if (added === '1' || added === 1) recipientAllowlistStore.add(PublicKey.fromBase58(recipient));
+        else recipientAllowlistStore.remove(PublicKey.fromBase58(recipient));
+      }
+      continue;
+    }
+  }
+
+  return { ownerStore, approvalStore, nullifierStore, recipientAllowlistStore };
+}
+
+export interface ProposeBackendInput {
+  proposal: ProposalInput;
+  proposer: string;
+  signatureBase58: string;
+}
+
+export async function proposeBackend(
+  config: BackendConfig,
+  input: ProposeBackendInput,
+): Promise<{ txHash: string; proposalHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const proposerPk = PublicKey.fromBase58(input.proposer);
+  const signature = Signature.fromBase58(input.signatureBase58);
+
+  const { ownerStore, approvalStore, nullifierStore } = await rebuildStores(
+    input.proposal.guardAddress,
+  );
+
+  const proposalHash = proposal.hash();
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.propose(
+        proposal,
+        ownerStore.getWitness(),
+        proposerPk,
+        signature,
+        nullifierStore.getWitness(proposalHash, proposerPk),
+        approvalStore.getWitness(proposalHash),
+      );
+    },
+  );
+  console.log('[tx-service] proving propose...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') {
+    throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  }
+  return { txHash: pending.hash, proposalHash: proposalHash.toString() };
+}
+
+export interface ApproveBackendInput {
+  proposal: ProposalInput;
+  approver: string;
+  signatureBase58: string;
+}
+
+export async function approveBackend(
+  config: BackendConfig,
+  input: ApproveBackendInput,
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const approverPk = PublicKey.fromBase58(input.approver);
+  const signature = Signature.fromBase58(input.signatureBase58);
+
+  const { ownerStore, approvalStore, nullifierStore } = await rebuildStores(
+    input.proposal.guardAddress,
+  );
+
+  const proposalHash = proposal.hash();
+  const currentCount = approvalStore.getCount(proposalHash);
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.approveProposal(
+        proposal,
+        signature,
+        approverPk,
+        ownerStore.getWitness(),
+        approvalStore.getWitness(proposalHash),
+        currentCount,
+        nullifierStore.getWitness(proposalHash, approverPk),
+      );
+    },
+  );
+  console.log('[tx-service] proving approve...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') {
+    throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  }
+  return { txHash: pending.hash };
+}
+
+export interface ExecuteTransferBackendInput {
+  proposal: ProposalInput;
+}
+
+export async function executeTransferBackend(
+  config: BackendConfig,
+  input: ExecuteTransferBackendInput,
+): Promise<{ txHash: string }> {
+  await ensureCompiled();
+  const proposal = buildProposalStruct(input.proposal);
+  const { approvalStore, recipientAllowlistStore } = await rebuildStores(
+    input.proposal.guardAddress,
+  );
+
+  const proposalHash = proposal.hash();
+  const approvalCount = approvalStore.getCount(proposalHash);
+  const feePayer = await acquireLightnetFeePayer(config);
+  const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+  const zkApp = new MinaGuard(guardAddress);
+
+  // Build the recipient-allowlist witness for slot 0 (the only slot
+  // enforced under our shrunk executeTransfer).
+  const enforce = zkApp.enforceRecipientAllowlist.get();
+  const enforcing = enforce.equals(Field(1)).toBoolean();
+  const r0 = proposal.receivers[0];
+  const r0Empty = r0.address.equals(PublicKey.empty()).toBoolean();
+  const dummyMap = new MerkleMap();
+  const witness0 = enforcing && !r0Empty
+    ? recipientAllowlistStore.getWitness(r0.address)
+    : dummyMap.getWitness(Field(0));
+  const value0 = enforcing && !r0Empty
+    ? recipientAllowlistStore.getValue(r0.address)
+    : Field(0);
+  const allowlistCheck = new RecipientAllowlistCheck({ witness0, value0 });
+
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeTransfer(
+        proposal,
+        approvalStore.getWitness(proposalHash),
+        approvalCount,
+        allowlistCheck,
+      );
+    },
+  );
+  console.log('[tx-service] proving executeTransfer...');
+  await tx.prove();
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') {
+    throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
+  }
+  return { txHash: pending.hash };
 }

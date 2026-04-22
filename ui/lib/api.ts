@@ -79,6 +79,76 @@ export async function deployAndSetupViaBackend(params: {
 }
 
 /**
+ * Shape of a proposal payload sent to backend-proving endpoints. All scalar
+ * fields are decimal-string form of their Field value; PublicKeys are base58.
+ */
+export interface BackendProposalInput {
+  receivers: Array<{ address: string; amount: string }>;
+  tokenId: string;
+  txType: string;
+  data: string;
+  uid: string;
+  configNonce: string;
+  expiryBlock: string;
+  networkId: string;
+  guardAddress: string;
+  destination: string;
+  childAccount: string;
+}
+
+/** Backend-proving propose. Auro signs proposalHash (1 Field). */
+export async function proposeViaBackend(params: {
+  proposal: BackendProposalInput;
+  proposer: string;
+  signatureBase58: string;
+}): Promise<{ txHash: string; proposalHash: string } | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/propose`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    return body as { txHash: string; proposalHash: string };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Backend-proving approve. Auro signs proposalHash (1 Field). */
+export async function approveViaBackend(params: {
+  proposal: BackendProposalInput;
+  approver: string;
+  signatureBase58: string;
+}): Promise<{ txHash: string } | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/approve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    return body as { txHash: string };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Backend-proving executeTransfer. Server rebuilds allowlist witness. */
+export async function executeTransferViaBackend(params: {
+  proposal: BackendProposalInput;
+}): Promise<{ txHash: string } | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/execute-transfer`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    return body as { txHash: string };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
  * Backend-proving single-key delegate. UI collects the Auro signature of
  * the canonical 7-field message (produced by `signFields` on the main
  * thread) and hands it to the backend. Backend proves + submits.

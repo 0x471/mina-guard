@@ -256,6 +256,66 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /**
+   * Backend-proving propose. UI collects Auro signature of the proposalHash
+   * (single Field — Ledger-compatible). Backend rebuilds off-chain stores
+   * from indexed events, constructs + proves + submits.
+   */
+  router.post('/api/tx/propose', safe(async (req, res) => {
+    if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
+    const body = (req.body ?? {}) as { proposal?: unknown; proposer?: unknown; signatureBase58?: unknown };
+    if (!body.proposal || typeof body.proposer !== 'string' || typeof body.signatureBase58 !== 'string') {
+      res.status(400).json({ error: 'proposal, proposer, signatureBase58 required' });
+      return;
+    }
+    const { proposeBackend } = await import('./tx-service.js');
+    try {
+      const result = await proposeBackend(config, {
+        proposal: body.proposal as never,
+        proposer: body.proposer,
+        signatureBase58: body.signatureBase58,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }));
+
+  /** Backend-proving approve. */
+  router.post('/api/tx/approve', safe(async (req, res) => {
+    if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
+    const body = (req.body ?? {}) as { proposal?: unknown; approver?: unknown; signatureBase58?: unknown };
+    if (!body.proposal || typeof body.approver !== 'string' || typeof body.signatureBase58 !== 'string') {
+      res.status(400).json({ error: 'proposal, approver, signatureBase58 required' });
+      return;
+    }
+    const { approveBackend } = await import('./tx-service.js');
+    try {
+      const result = await approveBackend(config, {
+        proposal: body.proposal as never,
+        approver: body.approver,
+        signatureBase58: body.signatureBase58,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }));
+
+  /** Backend-proving executeTransfer. Other execute* types still use worker. */
+  router.post('/api/tx/execute-transfer', safe(async (req, res) => {
+    if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
+    const body = (req.body ?? {}) as { proposal?: unknown };
+    if (!body.proposal) { res.status(400).json({ error: 'proposal required' }); return; }
+    const { executeTransferBackend } = await import('./tx-service.js');
+    try {
+      const result = await executeTransferBackend(config, { proposal: body.proposal as never });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }));
+
+  /**
    * Backend-proving `executeDelegateSingleKey`. UI collects the Auro signature
    * over the canonical 7-field message client-side; backend assembles the tx
    * and proves. Lightnet-only for now (operator-pays fee-payer).
