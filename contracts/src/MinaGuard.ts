@@ -1425,14 +1425,19 @@ export class MinaGuard extends SmartContract {
     const nonce = this.delegationNonce.getAndRequireEquals();
     const networkId = this.networkId.getAndRequireEquals();
 
-    // Optional expiry: expiryBlock == 0 means no expiry, matching
-    // TransactionProposal.expiryBlock semantics.
-    const hasExpiry = expiryBlock.value.equals(Field(0)).not();
-    const blockHeight = this.network.blockchainLength.getAndRequireEquals();
-    hasExpiry
-      .not()
-      .or(blockHeight.lessThanOrEqual(expiryBlock))
-      .assertTrue('Single-key delegation expired');
+    // Optional expiry: expiryBlock == 0 means no expiry. Use a RANGE
+    // precondition on blockchainLength (not equality) so the tx stays valid
+    // if the chain advances between prove and inclusion. Otherwise
+    // getAndRequireEquals pins to the exact block and a single block
+    // advance drops the tx from the mempool silently.
+    const noExpiry = expiryBlock.value.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.get();
+    this.network.blockchainLength.requireBetween(
+      UInt32.from(0),
+      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), expiryBlock),
+    );
+    const notExpired = blockchainLength.lessThanOrEqual(expiryBlock);
+    noExpiry.or(notExpired).assertTrue('Single-key delegation expired');
 
     // Canonical signed message. Field order is part of the external signing
     // contract — do not reorder without updating UI / test / CLI signers.
