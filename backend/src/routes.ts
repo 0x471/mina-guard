@@ -255,6 +255,48 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
   }));
 
+  /**
+   * Backend-proving `executeDelegateSingleKey`. UI collects the Auro signature
+   * over the canonical 7-field message client-side; backend assembles the tx
+   * and proves. Lightnet-only for now (operator-pays fee-payer).
+   */
+  router.post('/api/tx/delegate-single-key', safe(async (req, res) => {
+    if (!config) {
+      res.status(500).json({ error: 'Backend config unavailable' });
+      return;
+    }
+    const body = (req.body ?? {}) as {
+      guardAddress?: unknown;
+      delegate?: unknown;
+      delegationKeyPub?: unknown;
+      expiryBlock?: unknown;
+      signatureBase58?: unknown;
+    };
+    const guardAddress = typeof body.guardAddress === 'string' ? body.guardAddress : '';
+    const delegationKeyPub = typeof body.delegationKeyPub === 'string' ? body.delegationKeyPub : '';
+    const signatureBase58 = typeof body.signatureBase58 === 'string' ? body.signatureBase58 : '';
+    const delegate = typeof body.delegate === 'string' && body.delegate ? body.delegate : null;
+    const expiryBlock = typeof body.expiryBlock === 'string' ? body.expiryBlock : null;
+    if (!guardAddress || !delegationKeyPub || !signatureBase58) {
+      res.status(400).json({ error: 'guardAddress, delegationKeyPub, signatureBase58 required' });
+      return;
+    }
+    const { delegateSingleKey } = await import('./tx-service.js');
+    try {
+      const result = await delegateSingleKey(config, {
+        guardAddress,
+        delegate,
+        delegationKeyPub,
+        expiryBlock,
+        signatureBase58,
+      });
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  }));
+
   /** Lists incoming transfers to this guard (deposits, rewards, etc). */
   router.get('/api/contracts/:address/incoming', addressParamsMiddleware, safe(async (req, res) => {
     const { address } = addressParamsSchema.parse(req.params) as AddressParams;

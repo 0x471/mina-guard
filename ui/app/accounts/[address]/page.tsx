@@ -16,7 +16,11 @@ import {
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { fetchBalance, fetchChildren, fetchProposal } from '@/lib/api';
-import { deployAndSetupChildOnchain, executeSingleKeyDelegate } from '@/lib/multisigClient';
+import { deployAndSetupChildOnchain } from '@/lib/multisigClient';
+import { delegateSingleKeyViaBackend } from '@/lib/api';
+import { getAuroSignFields } from '@/lib/auroWallet';
+import { Field, PublicKey, Poseidon, UInt32 } from 'o1js';
+import { DELEGATION_KEY_HASH_PREFIX } from 'contracts';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import {
@@ -647,17 +651,53 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
       return;
     }
 
-    const signer = wallet.type
-      ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex }
-      : undefined;
-    void startOperation('Requesting delegation signature…', async (onProgress) => {
-      return await executeSingleKeyDelegate({
+    const walletPub = PublicKey.fromBase58(wallet.address!);
+    const guardPub = PublicKey.fromBase58(contract.address);
+
+    // Pre-flight: wallet's pubkey must hash to the on-chain delegationKeyHash.
+    const expectedHash = Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, walletPub.toFields());
+    if (contract.delegationKeyHash && expectedHash.toString() !== contract.delegationKeyHash) {
+      setLocalError('The connected wallet is not the delegation key for this guard.');
+      return;
+    }
+
+    if (contract.networkId == null || contract.delegationNonce == null) {
+      setLocalError('Guard state not fully indexed yet — try again in a moment.');
+      return;
+    }
+
+    const delegatePk = target ? PublicKey.fromBase58(target) : PublicKey.empty();
+    const networkIdField = Field(contract.networkId);
+    const nonceField = Field(contract.delegationNonce);
+    const expiryField = UInt32.from(expiry || '0').value;
+
+    // Canonical signed message — order is ABI-bound, must match contract.
+    const msgFields = [
+      ...delegatePk.toFields(),
+      ...guardPub.toFields(),
+      networkIdField,
+      nonceField,
+      expiryField,
+    ].map((f) => f.toString());
+
+    void startOperation('Requesting Auro signature…', async (onProgress) => {
+      onProgress('Signing canonical message with Auro…');
+      const signed = await getAuroSignFields(msgFields);
+      if (!signed) {
+        throw new Error('User rejected or Auro signature failed.');
+      }
+      onProgress('Submitting to backend prover…');
+      const result = await delegateSingleKeyViaBackend({
         guardAddress: contract.address,
+        delegate: target,
         delegationKeyPub: wallet.address!,
-        delegate: target ?? null,
         expiryBlock: expiry || null,
-        feePayerAddress: wallet.address!,
-      }, onProgress, signer);
+        signatureBase58: signed.signature,
+      });
+      if ('error' in result) {
+        throw new Error(result.error);
+      }
+      return `Delegate rotated (tx ${result.txHash.slice(0, 10)}…)`;
     });
     setOpen(false);
     setDelegate('');
@@ -705,7 +745,7 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
           </label>
 
           <label className="space-y-1 block">
-            <span className="text-xs text-safe-text">Expiry block (optional — 0 = no expiry)</span>
+            <span className="text-xs text-safe-text">Expiry block height (absolute — 0 = no expiry)</span>
             <input
               type="text"
               value={expiryBlock}
@@ -713,6 +753,11 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
               placeholder="0"
               className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green"
             />
+            <span className="text-xs text-safe-text opacity-70">
+              Absolute chain-height — NOT a duration. Leave 0 to skip expiry. If you set a
+              small number like 100 the signature is treated as expired immediately
+              (lightnet&apos;s at ~243+ blocks and counting).
+            </span>
           </label>
 
           <p className="text-xs text-safe-text opacity-70">

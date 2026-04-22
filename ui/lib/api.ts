@@ -78,6 +78,34 @@ export async function deployAndSetupViaBackend(params: {
   }
 }
 
+/**
+ * Backend-proving single-key delegate. UI collects the Auro signature of
+ * the canonical 7-field message (produced by `signFields` on the main
+ * thread) and hands it to the backend. Backend proves + submits.
+ */
+export async function delegateSingleKeyViaBackend(params: {
+  guardAddress: string;
+  delegate: string | null;
+  delegationKeyPub: string;
+  expiryBlock: string | null;
+  signatureBase58: string;
+}): Promise<{ txHash: string; feePayerAddress: string } | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/delegate-single-key`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) {
+      return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    }
+    return body as { txHash: string; feePayerAddress: string };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Lists active recipient-allowlist entries (addresses currently allowed). */
 export async function fetchRecipientAllowlist(address: string): Promise<string[]> {
   const data = await getJson<Array<Record<string, unknown>>>(

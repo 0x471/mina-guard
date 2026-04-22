@@ -5,6 +5,8 @@ import {
   Mina,
   PrivateKey,
   PublicKey,
+  Signature,
+  UInt32,
   UInt64,
   fetchAccount,
 } from 'o1js';
@@ -187,6 +189,75 @@ export async function deployGuard(
   return {
     zkAppAddress: zkAppAddress.toBase58(),
     zkAppPrivateKey: zkAppKey.toBase58(),
+    txHash: pending.hash,
+    feePayerAddress: feePayer.pub.toBase58(),
+  };
+}
+
+export interface DelegateSingleKeyInput {
+  guardAddress: string;
+  delegate: string | null; // null/empty → undelegate to self
+  delegationKeyPub: string;
+  expiryBlock: string | null; // UInt32 string, null/0 = no expiry
+  signatureBase58: string; // Auro's `signFields` base58 signature over the canonical 7-field message
+}
+
+export interface DelegateSingleKeyOutput {
+  txHash: string;
+  feePayerAddress: string;
+}
+
+/**
+ * Backend-proving `executeDelegateSingleKey`. UI collects the user's Auro
+ * signature over the canonical 7-field message
+ *   [...delegate.toFields(), ...guardAddress.toFields(), networkId, nonce, expiryBlock.value]
+ * and POSTs it here. Backend reads on-chain state, builds + proves + submits.
+ *
+ * Signature verification still happens on-chain — the backend cannot forge
+ * the user's signature, only relay it.
+ */
+export async function delegateSingleKey(
+  config: BackendConfig,
+  input: DelegateSingleKeyInput,
+): Promise<DelegateSingleKeyOutput> {
+  await ensureCompiled();
+
+  const guardAddress = PublicKey.fromBase58(input.guardAddress);
+  const delegationKeyPub = PublicKey.fromBase58(input.delegationKeyPub);
+  const delegatePk = input.delegate ? PublicKey.fromBase58(input.delegate) : PublicKey.empty();
+  const expiryBlock = UInt32.from(input.expiryBlock ?? '0');
+  const signature = Signature.fromBase58(input.signatureBase58);
+
+  const feePayer = await acquireLightnetFeePayer(config);
+  await fetchAccount({ publicKey: feePayer.pub });
+  await fetchAccount({ publicKey: guardAddress });
+
+  const zkApp = new MinaGuard(guardAddress);
+
+  const tx = await Mina.transaction(
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    async () => {
+      await zkApp.executeDelegateSingleKey(
+        delegatePk,
+        delegationKeyPub,
+        expiryBlock,
+        signature,
+      );
+    },
+  );
+
+  console.log('[tx-service] proving delegateSingleKey...');
+  const start = Date.now();
+  await tx.prove();
+  console.log(`[tx-service] proved in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+
+  const pending = await tx.sign([feePayer.key]).send();
+  if (pending.status !== 'pending') {
+    const errors = (pending as { errors?: unknown[] }).errors ?? [];
+    throw new Error(`Submission rejected: ${JSON.stringify(errors)}`);
+  }
+
+  return {
     txHash: pending.hash,
     feePayerAddress: feePayer.pub.toBase58(),
   };
