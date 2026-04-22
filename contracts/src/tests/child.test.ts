@@ -9,7 +9,7 @@ import {
   PublicKey,
   UInt64,
 } from 'o1js';
-import { MinaGuard, Receiver, SetupOwnersInput, TransactionProposal } from '../MinaGuard.js';
+import { MinaGuard, Receiver, RecipientAllowlistCheck, SetupOwnersInput, TransactionProposal } from '../MinaGuard.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { EMPTY_MERKLE_MAP_ROOT, EXECUTED_MARKER, TxType, Destination } from '../constants.js';
 import {
@@ -19,6 +19,7 @@ import {
   proposeAndApproveOnParent,
   proposeTransaction,
   approveTransaction,
+  buildRecipientAllowlistCheck,
   createCreateChildProposal,
   createAllocateChildProposal,
   createReclaimChildProposal,
@@ -83,7 +84,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       childAddress,
       parentCtx.owners.map((o) => o.pub),
       2,
-      [0, 1],
+      [0, 1, 2],
     );
   }
 
@@ -97,7 +98,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
       expect(childZkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
       expect(childZkApp.threshold.get()).toEqual(Field(2));
-      expect(childZkApp.numOwners.get()).toEqual(Field(3));
+      expect(childZkApp.numOwners.get()).toEqual(Field(4));
 
       expect(proposalHash).toBeDefined();
     });
@@ -136,6 +137,10 @@ describe('MinaGuard - Child Lifecycle', () => {
             proposal,
             parentApprovalWitness,
             parentApprovalCount,
+            PublicKey.empty(),
+            EMPTY_MERKLE_MAP_ROOT,
+            Field(0),
+            PublicKey.empty(),
           );
         });
         await txn.prove();
@@ -174,6 +179,10 @@ describe('MinaGuard - Child Lifecycle', () => {
             ),
             parentApprovalWitness,
             parentApprovalCount,
+            PublicKey.empty(),
+            EMPTY_MERKLE_MAP_ROOT,
+            Field(0),
+            PublicKey.empty(),
           );
         });
         await txn.prove();
@@ -201,7 +210,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       });
 
       const { parentApprovalWitness, parentApprovalCount } =
-        await proposeAndApproveOnParent(parentCtx, badProposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, badProposal, [0, 1, 2]);
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
@@ -217,6 +226,10 @@ describe('MinaGuard - Child Lifecycle', () => {
             badProposal,
             parentApprovalWitness,
             parentApprovalCount,
+            PublicKey.empty(),
+            EMPTY_MERKLE_MAP_ROOT,
+            Field(0),
+            PublicKey.empty(),
           );
         });
         await txn.prove();
@@ -281,7 +294,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childBAddress,
         parentCtx.owners.map((o) => o.pub),
         2,
-        [0, 1],
+        [0, 1, 2],
         Field(1),
       );
 
@@ -301,6 +314,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposalHash = await proposeTransaction(parentCtx, allocateProposal, 0);
       await approveTransaction(parentCtx, allocateProposal, 1);
+      await approveTransaction(parentCtx, allocateProposal, 2);
 
       const childABefore = getBalance(childAddress);
       const childBBefore = getBalance(childBAddress);
@@ -335,6 +349,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposalHash = await proposeTransaction(parentCtx, allocateProposal, 0);
       await approveTransaction(parentCtx, allocateProposal, 1);
+      await approveTransaction(parentCtx, allocateProposal, 2);
       const approvalCount = parentCtx.approvalStore.getCount(proposalHash);
       const approvalWitness = parentCtx.approvalStore.getWitness(proposalHash);
 
@@ -405,7 +420,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1, 2]);
       return { proposal, proposalHash, parentApprovalWitness, parentApprovalCount };
     }
 
@@ -523,7 +538,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       );
       {
         const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-          await proposeAndApproveOnParent(parentCtx, disableProposal, [0, 1]);
+          await proposeAndApproveOnParent(parentCtx, disableProposal, [0, 1, 2]);
         const childExecutionWitness = childExecutionWitnessFor(proposalHash);
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeEnableChildMultiSig(
@@ -605,7 +620,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1, 2]);
 
       const childBalanceBefore = getBalance(childAddress);
       const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
@@ -643,7 +658,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       const txn1 = await Mina.transaction(parentCtx.deployerAccount, async () => {
@@ -717,7 +732,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
@@ -747,7 +762,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       await expect(async () => {
@@ -778,7 +793,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       const txn1 = await Mina.transaction(parentCtx.deployerAccount, async () => {
@@ -854,7 +869,12 @@ describe('MinaGuard - Child Lifecycle', () => {
       // executeTransfer
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          await childZkApp.executeTransfer(localTransfer, dummyApprovalWitness, dummyApprovalCount);
+          await childZkApp.executeTransfer(
+            localTransfer,
+            dummyApprovalWitness,
+            dummyApprovalCount,
+            buildRecipientAllowlistCheck(localTransfer, parentCtx.recipientAllowlistStore, false),
+          );
         });
         await txn.prove();
         await txn.sign([parentCtx.deployerKey]).send();
@@ -931,7 +951,12 @@ describe('MinaGuard - Child Lifecycle', () => {
       // mismatch), not at the gate — which is all we need to confirm here.
       await assertChildMultiSigEnabled(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          await childZkApp.executeTransfer(localTransfer, dummyApprovalWitness, dummyApprovalCount);
+          await childZkApp.executeTransfer(
+            localTransfer,
+            dummyApprovalWitness,
+            dummyApprovalCount,
+            buildRecipientAllowlistCheck(localTransfer, parentCtx.recipientAllowlistStore, false),
+          );
         });
         await txn.prove();
         await txn.sign([parentCtx.deployerKey]).send();
@@ -1007,7 +1032,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childBAddress,
         parentCtx.owners.map((o) => o.pub),
         2,
-        [0, 1],
+        [0, 1, 2],
         Field(999), // distinct uid so the CREATE_CHILD hash differs
       );
       const childBExecMap = new MerkleMap();
@@ -1024,7 +1049,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount } =
-        await proposeAndApproveOnParent(parentCtx, proposalForA, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposalForA, [0, 1, 2]);
 
       // Try to execute it on child B — the child B contract asserts the
       // proposal's childAccount equals its own address, so this must fail.
@@ -1063,7 +1088,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1, 2]);
 
       // Bump the parent's configNonce by running a threshold change (2 -> 3).
       const thresholdChange = createThresholdProposal(
@@ -1076,6 +1101,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       );
       const changeHash = await proposeTransaction(parentCtx, thresholdChange, 0);
       await approveTransaction(parentCtx, thresholdChange, 1);
+      await approveTransaction(parentCtx, thresholdChange, 2);
       const changeCount = parentCtx.approvalStore.getCount(changeHash);
       const changeWitness = parentCtx.approvalStore.getWitness(changeHash);
       const execTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
@@ -1128,7 +1154,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       await expect(async () => {
@@ -1159,7 +1185,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1, 2]);
 
       // Snapshot parent's approval root before the child executes, and confirm
       // it currently encodes parentApprovalCount at proposalHash.
@@ -1209,7 +1235,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);
+        await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1, 2]);
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
       const destroyTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
