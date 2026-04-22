@@ -24,6 +24,10 @@ model Contract {
   delegate       String?
   parent         String?
   childMultiSigEnabled Boolean?
+  delegationKeyHash         String?
+  delegationNonce           Int?
+  recipientAllowlistRoot    String?
+  enforceRecipientAllowlist Boolean?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -31,6 +35,10 @@ model Contract {
   owners         Owner[]
   proposals      Proposal[]
   events         EventRaw[]
+  singleKeyDelegations SingleKeyDelegation[]
+  recipientAllowlist   RecipientAllowlistEntry[]
+  recipientAliases     RecipientAlias[]
+  incomingTransfers    IncomingTransfer[]
 
   @@index([parent])
 }
@@ -66,6 +74,7 @@ model Proposal {
   guardAddress    String?
   destination     String?
   childAccount    String?
+  memo            String?
   status          String    @default("pending")
   approvalCount   Int       @default(0)
   createdAtBlock  Int?
@@ -124,4 +133,58 @@ model IndexerCursor {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model SingleKeyDelegation {
+  id          Int      @id @default(autoincrement())
+  contractId  Int
+  delegate    String
+  nonce       Int
+  blockHeight Int?
+  txHash      String?
+  createdAt   DateTime @default(now())
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, nonce])
+  @@index([contractId, createdAt])
+}
+
+model RecipientAllowlistEntry {
+  id         Int       @id @default(autoincrement())
+  contractId Int
+  address    String
+  active     Boolean   @default(true)
+  addedAt    DateTime  @default(now())
+  removedAt  DateTime?
+  contract   Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, address])
+  @@index([contractId, active])
+}
+
+model RecipientAlias {
+  id         Int      @id @default(autoincrement())
+  contractId Int
+  alias      String
+  address    String
+  createdBy  String?
+  createdAt  DateTime @default(now())
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, alias])
+}
+
+model IncomingTransfer {
+  id          Int      @id @default(autoincrement())
+  contractId  Int
+  fromAddress String
+  amount      String
+  memo        String?
+  blockHeight Int
+  txHash      String
+  createdAt   DateTime @default(now())
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, txHash])
+  @@index([contractId, blockHeight])
 }
