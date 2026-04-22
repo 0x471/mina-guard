@@ -982,20 +982,15 @@ const workerApi = {
       if (txType === 'transfer') {
         const dummyMap = new MerkleMap();
         const emptyWitness: MerkleMapWitness = dummyMap.getWitness(Field(0));
-        const witnesses: MerkleMapWitness[] = [];
-        const values: Field[] = [];
-        for (let i = 0; i < MAX_RECEIVERS; i++) {
-          const r = proposalStruct.receivers[i];
-          const isEmpty = r.address.equals(PublicKey.empty()).toBoolean();
-          if (!enforcesAllowlist || isEmpty || !allowlistStore) {
-            witnesses.push(emptyWitness);
-            values.push(Field(0));
-          } else {
-            witnesses.push(allowlistStore.getWitness(r.address));
-            values.push(allowlistStore.getValue(r.address));
-          }
-        }
-        const allowlistCheck = new RecipientAllowlistCheck({ witnesses, values });
+        const r0 = proposalStruct.receivers[0];
+        const r0Empty = r0.address.equals(PublicKey.empty()).toBoolean();
+        const witness0 = (!enforcesAllowlist || r0Empty || !allowlistStore)
+          ? emptyWitness
+          : allowlistStore.getWitness(r0.address);
+        const value0 = (!enforcesAllowlist || r0Empty || !allowlistStore)
+          ? Field(0)
+          : allowlistStore.getValue(r0.address);
+        const allowlistCheck = new RecipientAllowlistCheck({ witness0, value0 });
         await contract.executeTransfer(
           proposalStruct,
           approvalWitness,

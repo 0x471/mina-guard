@@ -851,21 +851,19 @@ export function buildRecipientAllowlistCheck(
   store: RecipientAllowlistStore,
   enforceRecipientAllowlist: boolean,
 ): RecipientAllowlistCheck {
-  const dummyMap = new MerkleMap();
-  const witnesses: MerkleMapWitness[] = [];
-  const values: Field[] = [];
-  for (let i = 0; i < MAX_RECEIVERS; i++) {
-    const addr = proposal.receivers[i].address;
-    const isEmpty = addr.equals(PublicKey.empty()).toBoolean();
-    if (!enforceRecipientAllowlist || isEmpty) {
-      witnesses.push(dummyMap.getWitness(Field(0)));
-      values.push(Field(0));
-    } else {
-      witnesses.push(store.getWitness(addr));
-      values.push(store.getValue(addr));
-    }
+  const addr0 = proposal.receivers[0].address;
+  const isEmpty0 = addr0.equals(PublicKey.empty()).toBoolean();
+  if (!enforceRecipientAllowlist || isEmpty0) {
+    const dummyMap = new MerkleMap();
+    return new RecipientAllowlistCheck({
+      witness0: dummyMap.getWitness(Field(0)),
+      value0: Field(0),
+    });
   }
-  return new RecipientAllowlistCheck({ witnesses, values });
+  return new RecipientAllowlistCheck({
+    witness0: store.getWitness(addr0),
+    value0: store.getValue(addr0),
+  });
 }
 
 // -- Single-Key Delegation Helper -------------------------------------------
