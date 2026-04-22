@@ -774,6 +774,7 @@ export class MinaGuard extends SmartContract {
     delegationKey: PublicKey,
     recipientAllowlistRoot: Field,
     enforceRecipientAllowlist: Field,
+    initialDelegate: PublicKey,
   ) {
     const parentAddress = proposal.guardAddress;
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
@@ -784,13 +785,16 @@ export class MinaGuard extends SmartContract {
     proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
 
     // Bind the full child-config shape into proposal.data so the parent's
-    // CREATE_CHILD approval covers every field that shapes the child.
+    // CREATE_CHILD approval covers every field that shapes the child, including
+    // the initial stake delegate (so parents cannot be surprised at finalize
+    // time by a child delegating to an address they didn't approve).
     const isDelegationDisabled = delegationKey.equals(PublicKey.empty());
     const delegationKeyHash = Provable.if(
       isDelegationDisabled,
       Field(0),
       Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, delegationKey.toFields()),
     );
+    const initialDelegateFields = initialDelegate.toFields();
     const childConfigHash = Poseidon.hash([
       ownersCommitment,
       threshold,
@@ -798,6 +802,7 @@ export class MinaGuard extends SmartContract {
       delegationKeyHash,
       recipientAllowlistRoot,
       enforceRecipientAllowlist,
+      ...initialDelegateFields,
     ]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
@@ -825,6 +830,18 @@ export class MinaGuard extends SmartContract {
       enforceRecipientAllowlist,
     );
 
+    // Apply the initial stake delegate atomically with setup so the
+    // "child exists but unstaked" window does not exist on-chain. An
+    // empty initialDelegate means "delegate to self" (unstaked).
+    const isSelfDelegate = initialDelegate.equals(PublicKey.empty());
+    const effectiveDelegate = Provable.if(
+      isSelfDelegate,
+      PublicKey,
+      this.address,
+      initialDelegate,
+    );
+    this.account.delegate.set(effectiveDelegate);
+
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
@@ -833,6 +850,11 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('createChild', {
       proposalHash,
       parentAddress,
+    });
+
+    this.emitEvent('delegate', {
+      proposalHash,
+      delegate: effectiveDelegate,
     });
   }
 
