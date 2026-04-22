@@ -14,7 +14,9 @@ export type TxType =
   | 'allocateChild'
   | 'reclaimChild'
   | 'destroyChild'
-  | 'enableChildMultiSig';
+  | 'enableChildMultiSig'
+  | 'addRecipient'
+  | 'removeRecipient';
 
 /** Whether a proposal runs locally on its guard or is executed remotely on a child. */
 export type ProposalDestination = 'local' | 'remote';
@@ -127,8 +129,10 @@ export interface NewProposalInput {
   reclaimAmount?: string;
   /** Toggle target (true=enable, false=disable) for enableChildMultiSig. */
   childMultiSigEnable?: boolean;
-  /** Pre-computed Poseidon hash of [ownersCommitment, threshold, numOwners] for createChild. */
+  /** Pre-computed Poseidon hash of the full child config for createChild. */
   createChildConfigHash?: string;
+  /** Recipient address for addRecipient / removeRecipient. */
+  recipientAddress?: string;
 }
 
 export const TX_TYPE_LABELS: Record<TxType, string> = {
@@ -142,6 +146,8 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   reclaimChild: 'Reclaim from Subaccount',
   destroyChild: 'Destroy Subaccount',
   enableChildMultiSig: 'Toggle Subaccount Multi-sig',
+  addRecipient: 'Add Allowed Recipient',
+  removeRecipient: 'Remove Allowed Recipient',
 };
 
 export type TxTypeOption = { value: TxType; label: string; icon: string };
@@ -153,6 +159,8 @@ export const LOCAL_TX_TYPES: TxTypeOption[] = [
   { value: 'removeOwner', label: 'Remove Owner', icon: 'user-minus' },
   { value: 'changeThreshold', label: 'Change Threshold', icon: 'shield' },
   { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
+  { value: 'addRecipient', label: 'Add Allowed Recipient', icon: 'user-plus' },
+  { value: 'removeRecipient', label: 'Remove Allowed Recipient', icon: 'user-minus' },
 ];
 
 /** Subaccount-management actions — only shown on root (parent) account detail pages. */
@@ -211,6 +219,10 @@ export function parseTxType(value: string | null): TxType | null {
       return 'destroyChild';
     case '9':
       return 'enableChildMultiSig';
+    case '10':
+      return 'addRecipient';
+    case '11':
+      return 'removeRecipient';
     default:
       return null;
   }
@@ -227,6 +239,8 @@ const TX_TYPE_NAME_SET: ReadonlySet<TxType> = new Set<TxType>([
   'reclaimChild',
   'destroyChild',
   'enableChildMultiSig',
+  'addRecipient',
+  'removeRecipient',
 ]);
 
 /** Parses backend tx type strings to preserve already-humanized values when present. */

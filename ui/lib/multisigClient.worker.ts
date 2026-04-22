@@ -378,6 +378,8 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'reclaimChild') return Field(7);
   if (type === 'destroyChild') return Field(8);
   if (type === 'enableChildMultiSig') return Field(9);
+  if (type === 'addRecipient') return Field(10);
+  if (type === 'removeRecipient') return Field(11);
   throw new Error(`Unknown TxType: ${type}`);
 }
 
@@ -402,6 +404,9 @@ function governanceTargetAddress(input: NewProposalInput): string | null {
   if (input.txType === 'addOwner') return input.newOwner ?? null;
   if (input.txType === 'removeOwner') return input.removeOwnerAddress ?? null;
   if (input.txType === 'setDelegate' && !input.undelegate) return input.delegate ?? null;
+  if (input.txType === 'addRecipient' || input.txType === 'removeRecipient') {
+    return input.recipientAddress ?? null;
+  }
   return null;
 }
 
@@ -1027,6 +1032,38 @@ const workerApi = {
 
       if (txType === 'setDelegate') {
         await contract.executeDelegate(proposalStruct, approvalWitness, approvalCount);
+        return;
+      }
+
+      if (txType === 'addRecipient' || txType === 'removeRecipient') {
+        // Rebuild the allowlist snapshot from the backend so the witness
+        // matches on-chain state. For ADD, the target must currently be
+        // absent (value 0); for REMOVE, present (value 1).
+        const entries = await fetchRecipientAllowlist(params.contractAddress);
+        const store = new RecipientAllowlistStore();
+        for (const addr of entries) {
+          try {
+            store.add(PublicKey.fromBase58(addr));
+          } catch {
+            /* skip malformed */
+          }
+        }
+        const onChainRoot = contract.recipientAllowlistRoot.get();
+        if (!store.getRoot().equals(onChainRoot).toBoolean()) {
+          throw new Error(
+            'Recipient allowlist state out of sync — indexer is behind chain. Retry in a few seconds.',
+          );
+        }
+        const recipient = proposalStruct.receivers[0].address;
+        const allowlistWitness = store.getWitness(recipient);
+        const currentValue = store.getValue(recipient);
+        await contract.executeUpdateRecipientAllowlist(
+          proposalStruct,
+          approvalWitness,
+          approvalCount,
+          allowlistWitness,
+          currentValue,
+        );
         return;
       }
 
