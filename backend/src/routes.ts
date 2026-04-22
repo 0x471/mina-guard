@@ -121,6 +121,100 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json(children);
   }));
 
+  /** Lists single-key delegation events ordered by nonce descending. */
+  router.get('/api/contracts/:address/single-key-delegations', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 500);
+    const rows = await prisma.singleKeyDelegation.findMany({
+      where: { contractId: contract.id },
+      orderBy: { nonce: 'desc' },
+      take: limit,
+    });
+    res.json(rows);
+  }));
+
+  /** Lists recipient-allowlist entries for a contract. Optional active filter. */
+  router.get('/api/contracts/:address/recipient-allowlist', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const activeFilter = req.query.active;
+    const active = activeFilter === 'true' ? true : activeFilter === 'false' ? false : undefined;
+    const rows = await prisma.recipientAllowlistEntry.findMany({
+      where: {
+        contractId: contract.id,
+        ...(active === undefined ? {} : { active }),
+      },
+      orderBy: [{ active: 'desc' }, { addedAt: 'desc' }],
+    });
+    res.json(rows);
+  }));
+
+  /** Lists saved recipient aliases (off-chain address book). */
+  router.get('/api/contracts/:address/recipient-aliases', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const rows = await prisma.recipientAlias.findMany({
+      where: { contractId: contract.id },
+      orderBy: { alias: 'asc' },
+    });
+    res.json(rows);
+  }));
+
+  /** Creates a recipient alias ({ alias, address }). */
+  router.post('/api/contracts/:address/recipient-aliases', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const body = (req.body ?? {}) as { alias?: unknown; address?: unknown; createdBy?: unknown };
+    const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
+    const aliasTarget = typeof body.address === 'string' ? body.address.trim() : '';
+    const createdBy = typeof body.createdBy === 'string' ? body.createdBy.trim() : null;
+    if (!alias || !aliasTarget) {
+      res.status(400).json({ error: 'alias and address required' });
+      return;
+    }
+    const row = await prisma.recipientAlias.upsert({
+      where: { contractId_alias: { contractId: contract.id, alias } },
+      create: { contractId: contract.id, alias, address: aliasTarget, createdBy },
+      update: { address: aliasTarget, createdBy },
+    });
+    res.status(201).json(row);
+  }));
+
+  /** Deletes a recipient alias by id. */
+  router.delete('/api/contracts/:address/recipient-aliases/:aliasId', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const aliasId = Number(req.params.aliasId);
+    if (!Number.isFinite(aliasId) || aliasId <= 0) {
+      res.status(400).json({ error: 'invalid aliasId' });
+      return;
+    }
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const row = await prisma.recipientAlias.findFirst({ where: { id: aliasId, contractId: contract.id } });
+    if (!row) { res.status(404).json({ error: 'Alias not found' }); return; }
+    await prisma.recipientAlias.delete({ where: { id: row.id } });
+    res.json({ ok: true });
+  }));
+
+  /** Lists incoming transfers to this guard (deposits, rewards, etc). */
+  router.get('/api/contracts/:address/incoming', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+    const contract = await prisma.contract.findUnique({ where: { address }, select: { id: true } });
+    if (!contract) { res.status(404).json({ error: 'Contract not found' }); return; }
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 500);
+    const rows = await prisma.incomingTransfer.findMany({
+      where: { contractId: contract.id },
+      orderBy: [{ blockHeight: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    });
+    res.json(rows);
+  }));
+
   /** Lists owner records for a contract with optional active-state filter. */
   router.get(
     '/api/contracts/:address/owners',
