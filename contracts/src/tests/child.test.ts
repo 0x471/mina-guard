@@ -98,7 +98,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
       expect(childZkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
       expect(childZkApp.threshold.get()).toEqual(Field(2));
-      expect(childZkApp.numOwners.get()).toEqual(Field(4));
+      expect(childZkApp.numOwners.get()).toEqual(Field(3));
 
       expect(proposalHash).toBeDefined();
     });
