@@ -262,6 +262,14 @@ export class MinaGuardIndexer {
         await this.applyDelegateEvent(contractId, chainEvent.event);
         return;
       }
+      case 'singleKeyDelegate': {
+        await this.applySingleKeyDelegateEvent(contractId, chainEvent);
+        return;
+      }
+      case 'recipientAllowlistChange': {
+        await this.applyRecipientAllowlistChangeEvent(contractId, chainEvent.event);
+        return;
+      }
       case 'createChild': {
         // Informational only; Contract row populated by applySetupEvent and
         // parent's CREATE_CHILD Proposal marked executed by applyExecutionEvent.
@@ -289,6 +297,10 @@ export class MinaGuardIndexer {
     const parent = asString(event.parent);
     const isRoot = parent === null || parent === EMPTY_PUBLIC_KEY;
 
+    const delegationKeyHash = asString(event.delegationKeyHash);
+    const recipientAllowlistRoot = asString(event.recipientAllowlistRoot);
+    const enforce = asString(event.enforceRecipientAllowlist);
+
     await prisma.contract.update({
       where: { id: contractId },
       data: {
@@ -299,6 +311,10 @@ export class MinaGuardIndexer {
         configNonce: 0,
         parent: isRoot ? null : parent,
         childMultiSigEnabled: true,
+        delegationKeyHash,
+        delegationNonce: 0,
+        recipientAllowlistRoot,
+        enforceRecipientAllowlist: enforce === '1',
       },
     });
   }
@@ -621,6 +637,82 @@ export class MinaGuardIndexer {
       where: { id: contractId },
       data: { delegate },
     });
+  }
+
+  /**
+   * Persists a SingleKeyDelegateEvent as a row and bumps the contract's
+   * delegationNonce + delegate pointer. Nonce is the pre-increment value
+   * from the event; the on-chain nonce after this tx is `nonce + 1`.
+   */
+  private async applySingleKeyDelegateEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+  ): Promise<void> {
+    const delegate = asString(chainEvent.event.delegate);
+    const nonce = asNumber(chainEvent.event.nonce);
+    if (delegate === null || nonce === null) return;
+
+    const contract = await prisma.contract.findUnique({ where: { id: contractId } });
+    if (!contract) return;
+
+    await prisma.singleKeyDelegation.upsert({
+      where: { contractId_nonce: { contractId, nonce } },
+      create: {
+        contractId,
+        delegate,
+        nonce,
+        blockHeight: chainEvent.blockHeight,
+        txHash: chainEvent.txHash,
+      },
+      update: {
+        delegate,
+        blockHeight: chainEvent.blockHeight,
+        txHash: chainEvent.txHash,
+      },
+    });
+
+    const isUndelegate = delegate === contract.address;
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: {
+        delegationNonce: nonce + 1,
+        delegate: isUndelegate ? null : delegate,
+      },
+    });
+  }
+
+  /**
+   * Upserts a RecipientAllowlistEntry on ADD (added=1) / REMOVE (added=0)
+   * and updates the contract's on-chain root mirror.
+   */
+  private async applyRecipientAllowlistChangeEvent(
+    contractId: number,
+    event: Record<string, unknown>
+  ): Promise<void> {
+    const recipient = asString(event.recipient);
+    const added = asNumber(event.added);
+    const newRoot = asString(event.newRoot);
+    if (recipient === null || added === null) return;
+
+    if (added === 1) {
+      await prisma.recipientAllowlistEntry.upsert({
+        where: { contractId_address: { contractId, address: recipient } },
+        create: { contractId, address: recipient, active: true },
+        update: { active: true, removedAt: null },
+      });
+    } else {
+      await prisma.recipientAllowlistEntry.updateMany({
+        where: { contractId, address: recipient },
+        data: { active: false, removedAt: new Date() },
+      });
+    }
+
+    if (newRoot !== null) {
+      await prisma.contract.update({
+        where: { id: contractId },
+        data: { recipientAllowlistRoot: newRoot },
+      });
+    }
   }
 
   /**
