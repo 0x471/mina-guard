@@ -233,6 +233,12 @@ export async function delegateSingleKey(
   config: BackendConfig,
   input: DelegateSingleKeyInput,
 ): Promise<DelegateSingleKeyOutput> {
+  console.log('[tx-service] delegateSingleKey input:', {
+    guardAddress: input.guardAddress,
+    delegate: input.delegate,
+    delegationKeyPub: input.delegationKeyPub,
+    expiryBlockRaw: input.expiryBlock,
+  });
   await ensureCompiled();
 
   const guardAddress = PublicKey.fromBase58(input.guardAddress);
@@ -240,6 +246,7 @@ export async function delegateSingleKey(
   const delegatePk = input.delegate ? PublicKey.fromBase58(input.delegate) : PublicKey.empty();
   const expiryBlock = UInt32.from(input.expiryBlock ?? '0');
   const signature = Signature.fromBase58(input.signatureBase58);
+  console.log(`[tx-service] resolved expiryBlock=${expiryBlock.toString()} delegate=${delegatePk.toBase58()}`);
 
   const feePayer = await acquireLightnetFeePayer(config);
   await fetchAccount({ publicKey: feePayer.pub });

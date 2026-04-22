@@ -276,7 +276,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       });
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[tx-service] ${req.path} error: ${msg}`);
+      if (err instanceof Error && err.stack) console.error(err.stack);
+      res.status(500).json({ error: msg });
     }
   }));
 
@@ -297,7 +300,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       });
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[tx-service] ${req.path} error: ${msg}`);
+      if (err instanceof Error && err.stack) console.error(err.stack);
+      res.status(500).json({ error: msg });
     }
   }));
 
@@ -367,7 +373,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       }
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[tx-service] ${req.path} error: ${msg}`);
+      if (err instanceof Error && err.stack) console.error(err.stack);
+      res.status(500).json({ error: msg });
     }
   }));
 
@@ -381,7 +390,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       const result = await executeTransferBackend(config, { proposal: body.proposal as never });
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[tx-service] ${req.path} error: ${msg}`);
+      if (err instanceof Error && err.stack) console.error(err.stack);
+      res.status(500).json({ error: msg });
     }
   }));
 

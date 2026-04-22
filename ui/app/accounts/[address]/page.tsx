@@ -624,11 +624,35 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [liveDelegate, setLiveDelegate] = useState<string | null>(null);
 
   const enabled = !!contract.delegationKeyHash && contract.delegationKeyHash !== '0';
   const ledgerBlocked = wallet.type === 'ledger';
 
+  // Fetch the on-chain `account.delegate` directly — the indexed
+  // `Contract.delegate` is also available but can lag the chain by up to
+  // one poll tick. Reading the node gives the freshest view.
+  useEffect(() => {
+    let cancelled = false;
+    const mina = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:18080/graphql';
+    const q = `{ account(publicKey: "${contract.address}") { delegateAccount { publicKey } } }`;
+    fetch(mina, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: q }) })
+      .then((r) => r.json())
+      .then((j: { data?: { account?: { delegateAccount?: { publicKey?: string } } } }) => {
+        if (cancelled) return;
+        const d = j?.data?.account?.delegateAccount?.publicKey ?? null;
+        setLiveDelegate(d);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+    // Refresh whenever the indexed view or the nonce advances (i.e. after a
+    // successful single-key rotation bumps Contract.delegationNonce).
+  }, [contract.address, contract.delegate, contract.delegationNonce]);
+
   if (!enabled) return null;
+
+  const shownDelegate = liveDelegate ?? contract.delegate ?? null;
+  const isSelfDelegate = shownDelegate === contract.address;
 
   const handleSubmit = async () => {
     setLocalError(null);
@@ -723,6 +747,25 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
         >
           Change delegate
         </button>
+      </div>
+
+      <div className="mb-3 space-y-2 border-t border-safe-border pt-3">
+        <div className="flex items-start justify-between gap-4">
+          <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0">Current delegate</span>
+          <span className="text-xs font-mono break-all text-right">
+            {shownDelegate == null ? (
+              <span className="opacity-60">(loading…)</span>
+            ) : isSelfDelegate ? (
+              <span className="text-amber-300">unstaked (points to self)</span>
+            ) : (
+              shownDelegate
+            )}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0">Rotations so far</span>
+          <span className="text-xs font-mono">{contract.delegationNonce ?? 0}</span>
+        </div>
       </div>
 
       {open && (
