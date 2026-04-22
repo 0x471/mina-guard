@@ -1427,7 +1427,9 @@ const workerApi = {
 
 export type WorkerApi = typeof workerApi;
 
-// Eagerly start compilation as soon as the worker loads
-compileContract().catch(() => { });
+// NOTE: no eager compile. First compileContract() call (from a browser-path
+// action like deployAndSetupContract / executeProposalOnchain) will trigger
+// it lazily. Prevents wasting 11 GB on users who'll use the backend-proving
+// path.
 
 Comlink.expose(workerApi);
