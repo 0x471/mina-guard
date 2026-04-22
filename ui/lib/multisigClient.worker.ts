@@ -30,12 +30,18 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
   SetupOwnersInput,
+  RecipientAllowlistCheck,
+  RecipientAllowlistStore,
   OwnerStore,
   VoteNullifierStore,
   ApprovalStore,
   PublicKeyOption,
   Destination,
+  EMPTY_MERKLE_MAP_ROOT,
+  DELEGATION_KEY_HASH_PREFIX,
+  RECIPIENT_ALLOWLIST_KEY_PREFIX,
 } from 'contracts';
+import { UInt32, MerkleMapWitness } from 'o1js';
 
 import {
   type NewProposalInput,
@@ -606,6 +612,9 @@ const workerApi = {
       owners: string[];
       threshold: number;
       networkId: string;
+      delegationKey?: string | null;
+      recipientAllowlistRoot?: string | null;
+      enforceRecipientAllowlist?: boolean;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -630,6 +639,14 @@ const workerApi = {
       paddedOwners.push(PublicKey.empty());
     }
 
+    const delegationKey = params.delegationKey
+      ? PublicKey.fromBase58(params.delegationKey)
+      : PublicKey.empty();
+    const allowlistRoot = params.recipientAllowlistRoot
+      ? Field(params.recipientAllowlistRoot)
+      : EMPTY_MERKLE_MAP_ROOT;
+    const enforceAllowlist = params.enforceRecipientAllowlist ? Field(1) : Field(0);
+
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
@@ -640,7 +657,10 @@ const workerApi = {
         Field(params.threshold),
         Field(ownerKeys.length),
         Field(params.networkId),
-        new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) })
+        new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),
+        delegationKey,
+        allowlistRoot,
+        enforceAllowlist,
       );
     });
 
@@ -659,6 +679,9 @@ const workerApi = {
       owners: string[];
       threshold: number;
       networkId: string;
+      delegationKey?: string | null;
+      recipientAllowlistRoot?: string | null;
+      enforceRecipientAllowlist?: boolean;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -682,6 +705,14 @@ const workerApi = {
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkApp = new MinaGuard(zkAppAddress);
 
+    const delegationKey = params.delegationKey
+      ? PublicKey.fromBase58(params.delegationKey)
+      : PublicKey.empty();
+    const allowlistRoot = params.recipientAllowlistRoot
+      ? Field(params.recipientAllowlistRoot)
+      : EMPTY_MERKLE_MAP_ROOT;
+    const enforceAllowlist = params.enforceRecipientAllowlist ? Field(1) : Field(0);
+
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
@@ -692,7 +723,10 @@ const workerApi = {
         Field(params.networkId),
         new SetupOwnersInput({
           owners: paddedOwners.slice(0, MAX_OWNERS),
-        })
+        }),
+        delegationKey,
+        allowlistRoot,
+        enforceAllowlist,
       );
     });
 
@@ -910,7 +944,22 @@ const workerApi = {
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(executor), async () => {
       if (txType === 'transfer') {
-        await contract.executeTransfer(proposalStruct, approvalWitness, approvalCount);
+        // Build an empty-witness RecipientAllowlistCheck by default. When
+        // the guard has enforceRecipientAllowlist == 1, the caller must
+        // rebuild witnesses from the on-chain allowlist store BEFORE this
+        // point and thread them in via a dedicated path (TODO: surface
+        // enforcement in this code path once the UI allowlist manager lands).
+        const dummyMap = new MerkleMap();
+        const emptyWitness: MerkleMapWitness = dummyMap.getWitness(Field(0));
+        const witnesses = Array.from({ length: MAX_RECEIVERS }, () => emptyWitness);
+        const values = Array.from({ length: MAX_RECEIVERS }, () => Field(0));
+        const allowlistCheck = new RecipientAllowlistCheck({ witnesses, values });
+        await contract.executeTransfer(
+          proposalStruct,
+          approvalWitness,
+          approvalCount,
+          allowlistCheck,
+        );
         return;
       }
 
@@ -972,6 +1021,10 @@ const workerApi = {
       childOwners: string[];
       childThreshold: number;
       proposal: Proposal; // the parent's CREATE_CHILD proposal
+      childDelegationKey?: string | null;
+      childRecipientAllowlistRoot?: string | null;
+      childEnforceRecipientAllowlist?: boolean;
+      childInitialDelegate?: string | null;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -1011,6 +1064,17 @@ const workerApi = {
 
     const childZkApp = new MinaGuard(childAddress);
 
+    const childDelegationKey = params.childDelegationKey
+      ? PublicKey.fromBase58(params.childDelegationKey)
+      : PublicKey.empty();
+    const childRecipientAllowlistRoot = params.childRecipientAllowlistRoot
+      ? Field(params.childRecipientAllowlistRoot)
+      : EMPTY_MERKLE_MAP_ROOT;
+    const childEnforceRecipientAllowlist = params.childEnforceRecipientAllowlist ? Field(1) : Field(0);
+    const childInitialDelegate = params.childInitialDelegate
+      ? PublicKey.fromBase58(params.childInitialDelegate)
+      : PublicKey.empty();
+
     progressFn('Building transaction...');
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
@@ -1025,6 +1089,10 @@ const workerApi = {
         proposalStruct,
         approvalWitness,
         approvalCount,
+        childDelegationKey,
+        childRecipientAllowlistRoot,
+        childEnforceRecipientAllowlist,
+        childInitialDelegate,
       );
     });
 
@@ -1142,6 +1210,10 @@ const workerApi = {
   computeCreateChildConfigHash(params: {
     childOwners: string[];
     childThreshold: number;
+    childDelegationKey?: string | null;
+    childRecipientAllowlistRoot?: string | null;
+    childEnforceRecipientAllowlist?: boolean;
+    childInitialDelegate?: string | null;
   }): { ownersCommitment: string; configHash: string; childAddressKeypair: { privateKey: string; publicKey: string } } {
     const ownerStore = new OwnerStore();
     for (const addr of params.childOwners) {
@@ -1150,7 +1222,30 @@ const workerApi = {
     const ownersCommitment = ownerStore.getCommitment();
     const numOwners = Field(params.childOwners.length);
     const threshold = Field(params.childThreshold);
-    const configHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+
+    const delegationKey = params.childDelegationKey
+      ? PublicKey.fromBase58(params.childDelegationKey)
+      : PublicKey.empty();
+    const delegationKeyHash = delegationKey.equals(PublicKey.empty()).toBoolean()
+      ? Field(0)
+      : Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, delegationKey.toFields());
+    const recipientAllowlistRoot = params.childRecipientAllowlistRoot
+      ? Field(params.childRecipientAllowlistRoot)
+      : EMPTY_MERKLE_MAP_ROOT;
+    const enforceRecipientAllowlist = params.childEnforceRecipientAllowlist ? Field(1) : Field(0);
+    const initialDelegate = params.childInitialDelegate
+      ? PublicKey.fromBase58(params.childInitialDelegate)
+      : PublicKey.empty();
+
+    const configHash = Poseidon.hash([
+      ownersCommitment,
+      threshold,
+      numOwners,
+      delegationKeyHash,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
+      ...initialDelegate.toFields(),
+    ]);
     const childKey = PrivateKey.random();
     return {
       ownersCommitment: ownersCommitment.toString(),
@@ -1160,6 +1255,99 @@ const workerApi = {
         publicKey: childKey.toPublicKey().toBase58(),
       },
     };
+  },
+
+  /**
+   * Executes `executeDelegateSingleKey` on a guard with single-key delegation
+   * enabled. Reads the on-chain delegationNonce/networkId, asks the caller
+   * (Auro) to sign the canonical 7-field message, and submits.
+   *
+   * Field order is part of the external signing contract and must match
+   * `MinaGuard.executeDelegateSingleKey`:
+   *   [...delegate.toFields(), ...guardAddress.toFields(), networkId, nonce, expiryBlock]
+   */
+  async executeSingleKeyDelegate(
+    params: {
+      guardAddress: string;
+      delegationKeyPub: string; // Auro-connected wallet pubkey
+      delegate: string | null; // null/empty → undelegate to self
+      expiryBlock?: string | null;
+      feePayerAddress: string;
+    },
+    signFn: SignFieldsFn,
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn,
+  ): Promise<string | null> {
+    progressFn('Compiling contract...');
+    configureNetwork();
+    const ok = await compileContract();
+    if (!ok) return null;
+
+    const guardAddress = PublicKey.fromBase58(params.guardAddress);
+    const delegationKeyPub = PublicKey.fromBase58(params.delegationKeyPub);
+    const delegatePk = params.delegate ? PublicKey.fromBase58(params.delegate) : PublicKey.empty();
+    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+
+    progressFn('Reading guard state...');
+    await fetchAccount({ publicKey: guardAddress });
+    const zkApp = new MinaGuard(guardAddress);
+    const storedHash = zkApp.delegationKeyHash.get();
+    if (storedHash.equals(Field(0)).toBoolean()) {
+      throw new Error('Single-key delegation is not configured on this guard.');
+    }
+    // Pre-flight: refuse if the connected wallet isn't the delegation key.
+    const expectedHash = Poseidon.hashWithPrefix(
+      DELEGATION_KEY_HASH_PREFIX,
+      delegationKeyPub.toFields(),
+    );
+    if (!expectedHash.equals(storedHash).toBoolean()) {
+      throw new Error('The connected wallet is not the delegation key for this guard.');
+    }
+    const onChainNonce = zkApp.delegationNonce.get();
+    const onChainNetworkId = zkApp.networkId.get();
+    const expiry = params.expiryBlock ? UInt32.from(params.expiryBlock) : UInt32.from(0);
+
+    progressFn('Requesting signature...');
+    const msgFields = [
+      ...delegatePk.toFields(),
+      ...guardAddress.toFields(),
+      onChainNetworkId,
+      onChainNonce,
+      expiry.value,
+    ].map((f) => f.toString());
+    const signed = await signFn(msgFields);
+    if (!signed) {
+      throw new Error('User rejected signature request.');
+    }
+
+    // Auro returns a base58 signature string; Ledger returns {field, scalar}.
+    // Single-key delegation signs a 7-field message directly (not a Poseidon
+    // digest), and the Ledger app does not currently support multi-field
+    // signing — single-key path is Auro-only.
+    let signature: Signature;
+    if (typeof signed.signature === 'string') {
+      signature = Signature.fromBase58(signed.signature);
+    } else {
+      throw new Error(
+        'Ledger cannot sign multi-field messages. Use Auro for single-key delegation, or fall back to multisig executeDelegate.',
+      );
+    }
+
+    progressFn('Building transaction...');
+    await fetchAccount({ publicKey: feePayer });
+    clearStaleTransaction();
+    const tx = await Mina.transaction(txSender(feePayer), async () => {
+      await zkApp.executeDelegateSingleKey(delegatePk, delegationKeyPub, expiry, signature);
+    });
+
+    progressFn('Generating proof...');
+    await tx.prove();
+
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    if (!txHash) return null;
+    return `Transaction submitted: ${txHash}`;
   },
 };
 
