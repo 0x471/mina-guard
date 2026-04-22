@@ -50,6 +50,7 @@ import {
 } from '@/lib/types';
 import {
   fetchAllEvents,
+  fetchRecipientAllowlist,
 } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
@@ -941,18 +942,54 @@ const workerApi = {
     const executor = PublicKey.fromBase58(params.executorAddress);
 
     await fetchAccount({ publicKey: executor });
+    await fetchAccount({ publicKey: PublicKey.fromBase58(params.contractAddress) });
     clearStaleTransaction();
+
+    // Rebuild the recipient-allowlist store snapshot from the backend when
+    // the guard enforces it. Used by the TRANSFER branch below; allocate-
+    // to-children intentionally bypasses.
+    let allowlistStore: RecipientAllowlistStore | null = null;
+    let enforcesAllowlist = false;
+    if (txType === 'transfer') {
+      const enforceField = contract.enforceRecipientAllowlist.get();
+      enforcesAllowlist = enforceField.equals(Field(1)).toBoolean();
+      if (enforcesAllowlist) {
+        const entries = await fetchRecipientAllowlist(params.contractAddress);
+        allowlistStore = new RecipientAllowlistStore();
+        for (const addr of entries) {
+          try {
+            allowlistStore.add(PublicKey.fromBase58(addr));
+          } catch {
+            // Skip malformed entries — they cannot have been added on-chain.
+          }
+        }
+        const computedRoot = allowlistStore.getRoot();
+        const onChainRoot = contract.recipientAllowlistRoot.get();
+        if (!computedRoot.equals(onChainRoot).toBoolean()) {
+          throw new Error(
+            'Recipient allowlist state out of sync — indexer is behind chain. Retry in a few seconds.',
+          );
+        }
+      }
+    }
+
     const tx = await Mina.transaction(txSender(executor), async () => {
       if (txType === 'transfer') {
-        // Build an empty-witness RecipientAllowlistCheck by default. When
-        // the guard has enforceRecipientAllowlist == 1, the caller must
-        // rebuild witnesses from the on-chain allowlist store BEFORE this
-        // point and thread them in via a dedicated path (TODO: surface
-        // enforcement in this code path once the UI allowlist manager lands).
         const dummyMap = new MerkleMap();
         const emptyWitness: MerkleMapWitness = dummyMap.getWitness(Field(0));
-        const witnesses = Array.from({ length: MAX_RECEIVERS }, () => emptyWitness);
-        const values = Array.from({ length: MAX_RECEIVERS }, () => Field(0));
+        const witnesses: MerkleMapWitness[] = [];
+        const values: Field[] = [];
+        for (let i = 0; i < MAX_RECEIVERS; i++) {
+          const r = proposalStruct.receivers[i];
+          const isEmpty = r.address.equals(PublicKey.empty()).toBoolean();
+          if (!enforcesAllowlist || isEmpty || !allowlistStore) {
+            witnesses.push(emptyWitness);
+            values.push(Field(0));
+          } else {
+            witnesses.push(allowlistStore.getWitness(r.address));
+            values.push(allowlistStore.getValue(r.address));
+          }
+        }
         const allowlistCheck = new RecipientAllowlistCheck({ witnesses, values });
         await contract.executeTransfer(
           proposalStruct,

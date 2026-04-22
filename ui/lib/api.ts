@@ -38,6 +38,17 @@ export async function fetchChildren(parentAddress: string): Promise<ContractSumm
   return data.map((item) => toContractSummary(item));
 }
 
+/** Lists active recipient-allowlist entries (addresses currently allowed). */
+export async function fetchRecipientAllowlist(address: string): Promise<string[]> {
+  const data = await getJson<Array<Record<string, unknown>>>(
+    `/api/contracts/${address}/recipient-allowlist?active=true`,
+  );
+  if (!data) return [];
+  return data
+    .map((row) => (typeof row.address === 'string' ? row.address : ''))
+    .filter((a) => a !== '');
+}
+
 /** Fetches owner list for the selected contract. */
 export async function fetchOwners(address: string): Promise<OwnerRecord[]> {
   const data = await getJson<Array<Record<string, unknown>>>(`/api/contracts/${address}/owners`);
