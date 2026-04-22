@@ -1,6 +1,6 @@
 import { Bool, Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
 import { computeOwnerChain, PublicKeyOption, OwnerWitness } from './list-commitment.js';
-import { MAX_OWNERS } from './constants.js';
+import { MAX_OWNERS, RECIPIENT_ALLOWLIST_KEY_PREFIX } from './constants.js';
 
 // -- Serialization helpers ---------------------------------------------------
 
@@ -167,6 +167,78 @@ export class ApprovalStore {
   static deserialize(json: string): ApprovalStore {
     const data = JSON.parse(json);
     const store = new ApprovalStore();
+    const { map, keys } = deserializeMerkleMap(data.entries);
+    store.map = map;
+    store.keys = keys;
+    return store;
+  }
+}
+
+// -- RecipientAllowlistStore -------------------------------------------------
+
+/**
+ * Off-chain mirror of the on-chain recipient allowlist MerkleMap. Key is
+ * Poseidon.hashWithPrefix('recipient', addr.toFields()); value is Field(0)
+ * (not allowed) or Field(1) (allowed).
+ *
+ * Consumed by executeTransfer when enforceRecipientAllowlist == 1 to prove
+ * per-receiver membership, and by executeUpdateRecipientAllowlist to
+ * incrementally add/remove entries via multisig governance.
+ */
+export class RecipientAllowlistStore {
+  map: MerkleMap;
+  keys: Field[];
+
+  constructor() {
+    this.map = new MerkleMap();
+    this.keys = [];
+  }
+
+  private recipientKey(addr: PublicKey): Field {
+    return Poseidon.hashWithPrefix(RECIPIENT_ALLOWLIST_KEY_PREFIX, addr.toFields());
+  }
+
+  isAllowed(addr: PublicKey): boolean {
+    return this.map.get(this.recipientKey(addr)).toString() === '1';
+  }
+
+  add(addr: PublicKey): void {
+    const key = this.recipientKey(addr);
+    this.map.set(key, Field(1));
+    if (!this.keys.find((k) => k.toString() === key.toString())) {
+      this.keys.push(key);
+    }
+  }
+
+  remove(addr: PublicKey): void {
+    const key = this.recipientKey(addr);
+    this.map.set(key, Field(0));
+    if (!this.keys.find((k) => k.toString() === key.toString())) {
+      this.keys.push(key);
+    }
+  }
+
+  getWitness(addr: PublicKey) {
+    return this.map.getWitness(this.recipientKey(addr));
+  }
+
+  getValue(addr: PublicKey): Field {
+    return this.map.get(this.recipientKey(addr));
+  }
+
+  getRoot(): Field {
+    return this.map.getRoot();
+  }
+
+  serialize(): string {
+    return JSON.stringify({
+      entries: serializeMerkleMap(this.map, this.keys),
+    });
+  }
+
+  static deserialize(json: string): RecipientAllowlistStore {
+    const data = JSON.parse(json);
+    const store = new RecipientAllowlistStore();
     const { map, keys } = deserializeMerkleMap(data.entries);
     store.map = map;
     store.keys = keys;
