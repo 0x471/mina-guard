@@ -642,6 +642,20 @@ export async function approveTransaction(
 }
 
 /**
+ * Helper: after `proposeTransaction`, runs two `approveTransaction` calls
+ * (owners 1 and 2) so a threshold-2 proposal reaches the quorum. Reflects
+ * SOD: the proposer does not contribute an approval, so two additional
+ * approvers are required.
+ */
+export async function reachThresholdTwoApprovals(
+  ctx: TestContext,
+  proposal: TransactionProposal,
+): Promise<void> {
+  await approveTransaction(ctx, proposal, 1);
+  await approveTransaction(ctx, proposal, 2);
+}
+
+/**
  * Runs propose + approve on the parent guard so a REMOTE proposal reaches
  * threshold. Returns the parent approvalRoot witness and the accumulated
  * approval count — exactly what a child's lifecycle method needs to pass to
