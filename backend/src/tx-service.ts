@@ -56,32 +56,23 @@ async function ensureCompiled(): Promise<void> {
     compilePromise = (async () => {
       console.log('[tx-service] compiling MinaGuard (first-time, may take minutes)...');
       const start = Date.now();
-      // Heartbeat: logs per-method cache growth so an external watcher can
-      // tell if the compile is making progress without having to sample the
-      // process. Clears itself when compile resolves/rejects.
+      // o1js @2701 (pkg.pr.new) has a WASM bug in caml_pasta_fp_plonk_index_encode
+      // that traps on step-proving-key serialization. We use a read-only
+      // FileSystem cache so the SRS and any pre-existing keys are read from
+      // disk, but writes are skipped — side-stepping the trap via the
+      // canWrite guard in zkprogram.js write_().
       const cacheDir = './cache';
-      let lastCount = -1;
-      const heartbeat = setInterval(() => {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const fs = require('node:fs');
-          const count = fs.readdirSync(cacheDir).filter((f: string) => f.startsWith('step-pk-minaguard-') && !f.endsWith('.header')).length;
-          if (count !== lastCount) {
-            console.log(`[tx-service] compile progress: ${count}/14 methods cached (elapsed ${((Date.now() - start) / 1000).toFixed(0)}s)`);
-            lastCount = count;
-          }
-        } catch {
-          /* cache dir not created yet */
-        }
-      }, 10_000);
+      const baseCache = Cache.FileSystem(cacheDir);
+      const readOnlyCache = { ...baseCache, canWrite: false };
       try {
         const { verificationKey } = await MinaGuard.compile({
-          cache: Cache.FileSystem(cacheDir),
+          cache: readOnlyCache,
         });
         compileCache = { vk: verificationKey };
         console.log(`[tx-service] MinaGuard compiled in ${((Date.now() - start) / 1000).toFixed(1)}s`);
-      } finally {
-        clearInterval(heartbeat);
+      } catch (e) {
+        console.error('[tx-service] compile failed:', e);
+        throw e;
       }
     })();
   }
