@@ -8,6 +8,7 @@ import {
 } from './commands/vk-hash-address.ts';
 import { runVkHashCompile } from './commands/vk-hash-compile.ts';
 import { runFundAccounts } from './commands/fund-accounts.ts';
+import { runDelegateSingleKey } from './commands/delegate-single-key.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -97,6 +98,13 @@ async function main(): Promise<void> {
     .description('Fund all public keys from .env via lightnet account manager')
     .action(async () => {
       await runFundAccounts();
+    });
+
+  program
+    .command('delegate-single-key')
+    .description('Call executeDelegateSingleKey on a deployed MinaGuard. See delegate-single-key.ts for env vars.')
+    .action(async () => {
+      await runDelegateSingleKey();
     });
 
   await program.parseAsync(process.argv);
