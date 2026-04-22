@@ -1,4 +1,4 @@
-import { Field, Mina, AccountUpdate, UInt64 } from 'o1js';
+import { Field, Mina, AccountUpdate, PublicKey, UInt64 } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
 import { SetupOwnersInput } from '../MinaGuard.js';
 import {
@@ -23,7 +23,7 @@ describe('MinaGuard - Setup', () => {
 
     expect(ctx.zkApp.ownersCommitment.get()).toEqual(getOwnersCommitment(ctx));
     expect(ctx.zkApp.threshold.get()).toEqual(Field(2));
-    expect(ctx.zkApp.numOwners.get()).toEqual(Field(3));
+    expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(0));
     expect(ctx.zkApp.configNonce.get()).toEqual(Field(0));
     expect(ctx.zkApp.approvalRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
@@ -53,7 +53,10 @@ describe('MinaGuard - Setup', () => {
           Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
-          })
+          }),
+          PublicKey.empty(),
+          EMPTY_MERKLE_MAP_ROOT,
+          Field(0),
         );
       });
       await txn.prove();
@@ -61,7 +64,7 @@ describe('MinaGuard - Setup', () => {
     }).toThrow();
   });
 
-  it('should reject threshold = 0', async () => {
+  it('should reject threshold = 1 (SOD requires >= 2)', async () => {
     const { zkApp, zkAppKey, deployerKey, deployerAccount } = ctx;
     const ownersCommitment = getOwnersCommitment(ctx);
 
@@ -77,17 +80,20 @@ describe('MinaGuard - Setup', () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
         await zkApp.setup(
           ownersCommitment,
-          Field(0),
+          Field(1),
           Field(3),
           Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
-          })
+          }),
+          PublicKey.empty(),
+          EMPTY_MERKLE_MAP_ROOT,
+          Field(0),
         );
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
-    }).toThrow('Threshold must be > 0');
+    }).toThrow('Threshold must be > 1');
   });
 
   it('should reject numOwners < threshold', async () => {
@@ -110,7 +116,10 @@ describe('MinaGuard - Setup', () => {
           Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
-          })
+          }),
+          PublicKey.empty(),
+          EMPTY_MERKLE_MAP_ROOT,
+          Field(0),
         );
       });
       await txn.prove();

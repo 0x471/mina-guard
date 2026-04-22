@@ -6,6 +6,7 @@ import {
   deployAndSetup,
   proposeTransaction,
   approveTransaction,
+  buildRecipientAllowlistCheck,
   createTransferProposal,
   fundAccount,
   getBalance,
@@ -35,13 +36,20 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
+    // SOD: threshold 2 means two approvers distinct from the proposer.
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     const balanceBefore = getBalance(recipient);
 
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+      await ctx.zkApp.executeTransfer(
+        proposal,
+        approvalWitness,
+        Field(3),
+        buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+      );
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey]).send();
@@ -57,12 +65,18 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Only proposer approval exists (threshold = 2)
+    // SOD: propose stores PROPOSED_MARKER (=1). With threshold 2, 0 approvals
+    // after propose is "insufficient".
 
     await expect(async () => {
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
+        await ctx.zkApp.executeTransfer(
+          proposal,
+          approvalWitness,
+          Field(1),
+          buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
@@ -84,7 +98,12 @@ describe('MinaGuard - Execute', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(0));
+        await ctx.zkApp.executeTransfer(
+          proposal,
+          approvalWitness,
+          Field(0),
+          buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
@@ -106,11 +125,17 @@ describe('MinaGuard - Execute', () => {
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     // Execute first time
     const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness1, Field(3));
+      await ctx.zkApp.executeTransfer(
+        proposal,
+        approvalWitness1,
+        Field(3),
+        buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+      );
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey]).send();
@@ -120,7 +145,12 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, Field(10));
+        await ctx.zkApp.executeTransfer(
+          proposal,
+          approvalWitness2,
+          Field(10),
+          buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
@@ -129,7 +159,12 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, EXECUTED_MARKER);
+        await ctx.zkApp.executeTransfer(
+          proposal,
+          approvalWitness2,
+          EXECUTED_MARKER,
+          buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
@@ -177,12 +212,14 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     // 2. Perform a governance change (add owner) to bump configNonce to 1
     const newOwner = PrivateKey.random().toPublicKey();
     const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
     const govTxHash = await proposeTransaction(ctx, addOwnerProposal, 0);
     await approveTransaction(ctx, addOwnerProposal, 1);
+    await approveTransaction(ctx, addOwnerProposal, 2);
 
     const ownerPubs = ctx.owners.map((o) => o.pub);
     const ownerWitness = makeOwnerWitness(ownerPubs);
@@ -208,7 +245,12 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+        await ctx.zkApp.executeTransfer(
+          proposal,
+          approvalWitness,
+          Field(3),
+          buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
@@ -227,11 +269,17 @@ describe('MinaGuard - Execute', () => {
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     // Execute from deployer (not an owner)
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+      await ctx.zkApp.executeTransfer(
+        proposal,
+        approvalWitness,
+        Field(3),
+        buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+      );
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey]).send();

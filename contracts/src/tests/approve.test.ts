@@ -6,6 +6,7 @@ import {
   deployAndSetup,
   proposeTransaction,
   approveTransaction,
+  buildRecipientAllowlistCheck,
   createTransferProposal,
   makeOwnerWitness,
   type TestContext,
@@ -29,7 +30,8 @@ describe('MinaGuard - Approve', () => {
 
     await approveTransaction(ctx, proposal, 1);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
+    // SOD: propose stores PROPOSED_MARKER (=1). First approval bumps to 2.
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
   });
 
@@ -43,7 +45,8 @@ describe('MinaGuard - Approve', () => {
     await approveTransaction(ctx, proposal, 1);
     await approveTransaction(ctx, proposal, 2);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(4));
+    // SOD: PROPOSED_MARKER(1) + 2 approvals = 3.
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[2].pub)).toBe(true);
@@ -56,8 +59,9 @@ describe('MinaGuard - Approve', () => {
     );
     await proposeTransaction(ctx, proposal, 0);
 
-    // Proposer was already auto-approved in proposeTransaction().
-    // Try to approve again from same owner.
+    // SOD: propose does not count as an approval, but the proposer's
+    // vote-nullifier IS written during propose so they are blocked from
+    // approving their own proposal.
     await expect(async () => {
       await approveTransaction(ctx, proposal, 0);
     }).toThrow('Vote nullifier root mismatch');
@@ -84,7 +88,7 @@ describe('MinaGuard - Approve', () => {
           ctx.owners[1].pub,
           ownerWitness,
           approvalWitness,
-          Field(2),
+          Field(1),
           nullifierWitness
         );
       });
@@ -114,7 +118,7 @@ describe('MinaGuard - Approve', () => {
           nonOwner.toPublicKey(),
           ownerWitness,
           approvalWitness,
-          Field(2),
+          Field(1),
           nullifierWitness
         );
       });
@@ -141,13 +145,20 @@ describe('MinaGuard - Approve', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Get threshold approvals and execute
+    // Get threshold approvals and execute. SOD requires 2 approvers since
+    // the proposer's signature no longer counts toward the quorum.
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
     // Execute
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+      await ctx.zkApp.executeTransfer(
+        proposal,
+        approvalWitness,
+        Field(3),
+        buildRecipientAllowlistCheck(proposal, ctx.recipientAllowlistStore, false),
+      );
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey]).send();
@@ -155,9 +166,10 @@ describe('MinaGuard - Approve', () => {
     // Mark executed in off-chain store
     ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
 
-    // Try to approve after execution - should fail
+    // Try to approve after execution with a fresh owner (owner[3]) — should
+    // fail at the executed-marker gate, not at the vote nullifier.
     await expect(async () => {
-      await approveTransaction(ctx, proposal, 2);
+      await approveTransaction(ctx, proposal, 3);
     }).toThrow('Proposal already executed');
   });
 });

@@ -92,8 +92,13 @@ export function toFixedSetupOwners(owners: PublicKey[]): PublicKey[] {
   return padded.slice(0, MAX_OWNERS);
 }
 
-/** Creates and activates a local Mina blockchain test context with funded accounts. */
-export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> {
+/**
+ * Creates and activates a local Mina blockchain test context with funded
+ * accounts. Default `numOwners = 4` — with SOD enforced at threshold >= 2,
+ * typical flows need 1 proposer + 2 approvers + 1 spare to exercise
+ * post-execute rejection paths without exhausting owners.
+ */
+export async function setupLocalBlockchain(numOwners = 4): Promise<TestContext> {
   const Local = await Mina.LocalBlockchain({ proofsEnabled: false });
   Mina.setActiveInstance(Local);
 
