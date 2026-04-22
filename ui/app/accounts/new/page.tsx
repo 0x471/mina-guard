@@ -12,6 +12,7 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
+import { deployAndSetupViaBackend } from '@/lib/api';
 import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
 
 const NETWORKS = [
@@ -149,6 +150,46 @@ function CreateAccountWizard() {
       return await deployAndSetupContract(captured, onProgress, signer);
     });
     router.push(`/accounts/${keypair.publicKey}?pending=1`);
+  };
+
+  /**
+   * Backend-proving deploy path: no in-browser MinaGuard.compile, no Auro
+   * fee-payer signing. Backend generates the zkApp keypair, fetches a funded
+   * account from the lightnet account manager, proves + submits. Lightnet
+   * only; will error on devnet/mainnet until operator-pays / user-pays modes
+   * land in a follow-up.
+   */
+  const handleDeployViaBackend = async () => {
+    const error = validateStep2();
+    if (error) { setFormError(error); return; }
+    setFormError(null);
+    void startOperation('Submitting to backend prover…', async (onProgress) => {
+      onProgress('Backend compiling + proving (first call may take a while)…');
+      const result = await deployAndSetupViaBackend({
+        owners: parsedOwners,
+        threshold: Number(threshold),
+        networkId: network.networkId,
+        delegationKey: delegationKey.trim() || null,
+        enforceRecipientAllowlist,
+      });
+      if ('error' in result) {
+        throw new Error(result.error);
+      }
+      if (name.trim()) saveAccountName(result.zkAppAddress, name);
+      // Persist the server-generated zkApp private key client-side so the
+      // UI can later run executeSetupChild if this guard ever spawns
+      // children (the private key is needed to sign the child's deploy AU).
+      try {
+        localStorage.setItem(
+          `mina-guard:zkapp-key:${result.zkAppAddress}`,
+          result.zkAppPrivateKey,
+        );
+      } catch {
+        /* private-window or storage disabled — non-fatal */
+      }
+      router.push(`/accounts/${result.zkAppAddress}?pending=1`);
+      return `Deployed at ${result.zkAppAddress.slice(0, 12)}… (tx ${result.txHash.slice(0, 10)}…)`;
+    });
   };
 
   /** Submits a CREATE_CHILD proposal on the parent and stashes deployment state for finalization. */
@@ -493,13 +534,24 @@ function CreateAccountWizard() {
                     {isOperating ? 'Proposing…' : 'Propose subaccount'}
                   </button>
                 ) : (
-                  <button
-                    disabled={!keypair || isOperating}
-                    onClick={handleDeploy}
-                    className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
-                  >
-                    {isOperating ? 'Deploying…' : 'Deploy account'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={isOperating}
+                      onClick={handleDeployViaBackend}
+                      title="Backend compiles + proves + submits. Lightnet only. No browser MinaGuard.compile."
+                      className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
+                    >
+                      {isOperating ? 'Working…' : 'Deploy via backend'}
+                    </button>
+                    <button
+                      disabled={!keypair || isOperating}
+                      onClick={handleDeploy}
+                      title="Classic path: browser compiles MinaGuard + proves in WebWorker."
+                      className="border border-safe-border rounded-lg px-4 py-2 text-sm text-safe-text hover:bg-safe-hover transition-colors disabled:opacity-60"
+                    >
+                      Deploy via browser
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

@@ -201,6 +201,60 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json({ ok: true });
   }));
 
+  /**
+   * Backend-proving deploy + setup. Moves MinaGuard.compile() out of the
+   * browser WebWorker so the UI stays fast. Server compiles once per
+   * process, proves + submits, returns the fresh zkApp keypair to the UI
+   * (UI persists the private key locally for later child-lifecycle steps).
+   *
+   * Lightnet-only right now (backend fetches a funded fee-payer from the
+   * lightnet account manager). Devnet/mainnet paths are a follow-up.
+   */
+  router.post('/api/tx/deploy-and-setup', safe(async (req, res) => {
+    if (!config) {
+      res.status(500).json({ error: 'Backend config unavailable' });
+      return;
+    }
+    const body = (req.body ?? {}) as {
+      owners?: unknown;
+      threshold?: unknown;
+      networkId?: unknown;
+      delegationKey?: unknown;
+      recipientAllowlistRoot?: unknown;
+      enforceRecipientAllowlist?: unknown;
+    };
+    const owners = Array.isArray(body.owners)
+      ? body.owners.filter((v): v is string => typeof v === 'string')
+      : [];
+    const threshold = Number(body.threshold);
+    const networkId = typeof body.networkId === 'string' ? body.networkId : '';
+    const delegationKey = typeof body.delegationKey === 'string' ? body.delegationKey : null;
+    const recipientAllowlistRoot =
+      typeof body.recipientAllowlistRoot === 'string' ? body.recipientAllowlistRoot : null;
+    const enforceRecipientAllowlist = body.enforceRecipientAllowlist === true;
+    if (!owners.length || !Number.isFinite(threshold) || !networkId) {
+      res.status(400).json({ error: 'owners[], threshold, networkId required' });
+      return;
+    }
+    // Lazy-load the tx-service to avoid paying the MinaGuard.compile() boot
+    // cost for processes that only serve read routes.
+    const { deployGuard } = await import('./tx-service.js');
+    try {
+      const result = await deployGuard(config, {
+        owners,
+        threshold,
+        networkId,
+        delegationKey,
+        recipientAllowlistRoot,
+        enforceRecipientAllowlist,
+      });
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  }));
+
   /** Lists incoming transfers to this guard (deposits, rewards, etc). */
   router.get('/api/contracts/:address/incoming', addressParamsMiddleware, safe(async (req, res) => {
     const { address } = addressParamsSchema.parse(req.params) as AddressParams;

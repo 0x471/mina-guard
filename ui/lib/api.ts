@@ -38,6 +38,46 @@ export async function fetchChildren(parentAddress: string): Promise<ContractSumm
   return data.map((item) => toContractSummary(item));
 }
 
+/**
+ * Asks the backend to compile + prove + submit a deploy+setup transaction.
+ * Bypasses the browser WebWorker entirely — no in-browser MinaGuard.compile
+ * on first load. Lightnet-only right now (backend pulls a funded fee-payer
+ * from the lightnet account manager).
+ */
+export async function deployAndSetupViaBackend(params: {
+  owners: string[];
+  threshold: number;
+  networkId: string;
+  delegationKey?: string | null;
+  recipientAllowlistRoot?: string | null;
+  enforceRecipientAllowlist?: boolean;
+}): Promise<{
+  zkAppAddress: string;
+  zkAppPrivateKey: string;
+  txHash: string;
+  feePayerAddress: string;
+} | { error: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/tx/deploy-and-setup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
+    if (!response.ok) {
+      return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
+    }
+    return body as {
+      zkAppAddress: string;
+      zkAppPrivateKey: string;
+      txHash: string;
+      feePayerAddress: string;
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Lists active recipient-allowlist entries (addresses currently allowed). */
 export async function fetchRecipientAllowlist(address: string): Promise<string[]> {
   const data = await getJson<Array<Record<string, unknown>>>(
