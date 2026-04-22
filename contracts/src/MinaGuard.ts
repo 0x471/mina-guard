@@ -98,6 +98,18 @@ export class SetupOwnersInput extends Struct({
   owners: Provable.Array(PublicKey, MAX_OWNERS),
 }) { }
 
+/**
+ * Fixed-size recipient-allowlist witness bundle for executeTransfer.
+ * One MerkleMapWitness + one expected-current-value per receiver slot.
+ * When enforceRecipientAllowlist == 0, or a slot is empty, entries are
+ * unused at verification time — callers may pass empty-map witnesses and
+ * Field(0) values for those slots.
+ */
+export class RecipientAllowlistCheck extends Struct({
+  witnesses: Provable.Array(MerkleMapWitness, MAX_RECEIVERS),
+  values: Provable.Array(Field, MAX_RECEIVERS),
+}) { }
+
 // -- Events ------------------------------------------------------------------
 
 /** Emitted once per deploy transaction for contract discovery. */
@@ -592,6 +604,45 @@ export class MinaGuard extends SmartContract {
     }
   }
 
+  /**
+   * Sends MINA to each receiver slot, enforcing the recipient allowlist
+   * when the guard has enforceRecipientAllowlist == 1. Empty slots and
+   * allowlist-disabled guards skip the membership check. Callers must
+   * supply one witness + expected-current-value per receiver slot; the
+   * expected value is 1 (allowed) when enforcement bites and irrelevant
+   * (but still asserted to be 0|1) otherwise.
+   */
+  private executeTransfersWithAllowlist(
+    proposal: TransactionProposal,
+    witnesses: MerkleMapWitness[],
+    values: Field[],
+  ): void {
+    const enforce = this.enforceRecipientAllowlist.getAndRequireEquals();
+    const root = this.recipientAllowlistRoot.getAndRequireEquals();
+    const isEnforcing = enforce.equals(Field(1));
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const v = values[i];
+      v.equals(Field(0)).or(v.equals(Field(1)))
+        .assertTrue('Recipient allowlist value must be 0 or 1');
+      const mustCheck = isEnforcing.and(isEmpty.not());
+      const expectedKey = Poseidon.hashWithPrefix(
+        RECIPIENT_ALLOWLIST_KEY_PREFIX,
+        r.address.toFields(),
+      );
+      const [computedRoot, computedKey] = witnesses[i].computeRootAndKey(v);
+      mustCheck.not().or(computedRoot.equals(root))
+        .assertTrue('Recipient allowlist root mismatch');
+      mustCheck.not().or(computedKey.equals(expectedKey))
+        .assertTrue('Recipient allowlist key mismatch');
+      mustCheck.not().or(v.equals(Field(1)))
+        .assertTrue('Recipient not allowed');
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.send({ to: r.address, amount: effectiveAmount });
+    }
+  }
+
   /** Shared initialization: validates config, sets all state, emits setup + owner events. */
   private initializeState(
     ownersCommitment: Field,
@@ -968,11 +1019,19 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Executes transfer proposals once threshold and lifecycle checks pass. */
+  /**
+   * Executes transfer proposals once threshold and lifecycle checks pass.
+   *
+   * `allowlistCheck.witnesses[i]` + `allowlistCheck.values[i]` are verified
+   * per receiver slot only when `enforceRecipientAllowlist == 1` and the
+   * slot is non-empty. Callers MAY pass dummy witnesses (e.g. the empty-map
+   * witness) and values = Field(0) for slots that skip the check.
+   */
   @method async executeTransfer(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
-    approvalCount: Field
+    approvalCount: Field,
+    allowlistCheck: RecipientAllowlistCheck,
   ) {
     this.assertChildMultiSigEnabledIfChild();
     this.getInitializedOwnersCommitment();
@@ -992,7 +1051,11 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    this.executeTransfers(proposal);
+    this.executeTransfersWithAllowlist(
+      proposal,
+      allowlistCheck.witnesses,
+      allowlistCheck.values,
+    );
 
     this.markExecuted(approvalWitness);
 

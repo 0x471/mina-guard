@@ -3,6 +3,7 @@ export {
   Receiver,
   TransactionProposal,
   SetupOwnersInput,
+  RecipientAllowlistCheck,
   DeployEvent,
   SetupEvent,
   SetupOwnerEvent,
