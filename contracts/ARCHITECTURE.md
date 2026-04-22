@@ -15,14 +15,14 @@ All execution uses a **multi-step on-chain flow** (propose → approve → execu
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
-## On-Chain State (11 Fields)
+## On-Chain State (15 Fields)
 
-MinaGuard uses 11 state slots (requires the Mesa 32-slot branch of o1js):
+MinaGuard uses 15 state slots (requires the Mesa 32-slot branch of o1js):
 
 | Slot | Field | Purpose |
 | ---- | ----- | ------- |
 | 0 | `ownersCommitment` | Chain hash of the ordered owner list |
-| 1 | `threshold` | Minimum approvals required to execute any proposal |
+| 1 | `threshold` | Minimum approvals required to execute any proposal (≥ 2 — SOD) |
 | 2 | `numOwners` | Current owner count |
 | 3 | `proposalCounter` | Monotonic counter; each proposal gets a unique ID |
 | 4 | `voteNullifierRoot` | MerkleMap root preventing double-voting |
@@ -32,6 +32,10 @@ MinaGuard uses 11 state slots (requires the Mesa 32-slot branch of o1js):
 | 8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
 | 9 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
 | 10 | `childMultiSigEnabled` | `Field(1)` if this child accepts its own propose/approve/execute ops, `Field(0)` otherwise |
+| 11 | `delegationKeyHash` | `Poseidon.hashWithPrefix('delegation-key', delegationKey.toFields())` or `Field(0)` (disabled) |
+| 12 | `delegationNonce` | Monotonic counter for single-key delegation replay protection |
+| 13 | `recipientAllowlistRoot` | MerkleMap root of allowed transfer recipients |
+| 14 | `enforceRecipientAllowlist` | `Field(1)` if `executeTransfer` must verify each recipient against the allowlist |
 
 ## Owner Storage Model
 
@@ -378,3 +382,117 @@ Deploying a subaccount requires two separate Mina transactions:
 - `destination === 'local'` → `executeProposalOnchain` (calls `executeTransfer`/`executeOwnerChange`/`executeThresholdChange`/`executeDelegate`/`executeAllocateToChildren` on the parent).
 - `destination === 'remote'` and `txType ∈ {reclaimChild, destroyChild, enableChildMultiSig}` → `executeChildLifecycleOnchain` (calls the matching `execute*` method on the **child** guard, with parent approval witness + child execution witness assembled client-side from indexed events).
 - `txType === 'createChild'` → no-op from this page; the user is directed to the parent detail page's Pending Subaccounts banner for the explicit two-step finalization.
+
+## M0 Self-Custody Features
+
+The contract layers four additive features to satisfy the self-custody v1
+spec's M0 scope while preserving the general multisig primitive.
+
+### Separation of Duties (SOD)
+
+`propose()` no longer auto-counts the proposer's signature as their first
+vote. The proposer's signature authenticates the propose call; it does
+not count toward the approval threshold. The vote-nullifier write still
+fires at propose time, so the proposer remains blocked from approving
+their own proposal later.
+
+`setup()` asserts `threshold ≥ 2` — threshold=1 would let a single owner
+propose and immediately trigger execute, which contradicts SOD.
+
+### Single-Key Delegation
+
+A second, narrow authorization channel for rotating the staking delegate
+without a multisig quorum.
+
+- **State**: `delegationKeyHash` (commitment; `Field(0)` == disabled),
+  `delegationNonce` (monotonic).
+- **Method**: `executeDelegateSingleKey(delegate, delegationKey, expiryBlock, signature)`.
+- **Signed message** (7 Fields, order is ABI-bound):
+  ```
+  [...delegate.toFields(), ...guardAddress.toFields(), networkId, nonce, expiryBlock.value]
+  ```
+- **Disabled-first check**: `storedHash != 0` is asserted BEFORE hash
+  matching, so a disabled guard cannot be probed for pubkey hits.
+- **Undelegate**: `delegate == PublicKey.empty()` always takes effect
+  (sets delegate to self); this is the recovery path if the current BP
+  goes rogue.
+- **Child interaction**: a frozen child (`childMultiSigEnabled == 0`)
+  blocks this path too.
+- **Coexistence**: multisig `executeDelegate` remains active; it is the
+  emergency fallback if the delegation key is lost. The two paths have
+  independent replay protection (separate nonces).
+
+### Recipient Allowlist
+
+Optional on-chain enforcement that `executeTransfer` receivers must
+belong to a MerkleMap-backed allowlist mutated via quorum-governed
+`ADD_RECIPIENT` / `REMOVE_RECIPIENT` proposals.
+
+- **State**: `recipientAllowlistRoot`, `enforceRecipientAllowlist` (`Field(0|1)`).
+- **Key**: `Poseidon.hashWithPrefix('recipient', addr.toFields())`.
+- **Enforcement** (`executeTransfer`): per receiver slot, the witness
+  is checked iff `enforceRecipientAllowlist == 1 AND receiver.address != empty`.
+  Callers supply a `RecipientAllowlistCheck` struct (one witness + one
+  expected-value per `MAX_RECEIVERS` slot); unused slots pass
+  empty-map witnesses and `Field(0)` values.
+- **`executeAllocateToChildren` intentionally bypasses** the allowlist
+  (children are themselves governance-approved via `CREATE_CHILD`).
+- **Governance**: `executeUpdateRecipientAllowlist` is LOCAL quorum-gated.
+  ADD asserts current value `== 0`; REMOVE asserts current value `== 1`
+  (idempotent: no double-add, no remove-non-member).
+
+### Parent/Child for Block Producers
+
+The existing subaccount hierarchy is the product's BP allowlist: the
+parent is the treasury reserve, each approved BP gets its own child
+guard delegating to that BP. `CREATE_CHILD` is multisig-gated, so the
+quorum controls which BPs can receive delegation.
+
+```mermaid
+flowchart TB
+  Parent["Parent Guard\n(reserve)\nthreshold ≥ 2\nrecipientAllowlist: on"]
+  Exch1["Kraken"]:::ext
+  Exch2["Coinbase"]:::ext
+  ChildA["Child Guard A\ndelegate → BP-A\nown delegationKey"]
+  ChildB["Child Guard B\ndelegate → BP-B\nown delegationKey"]
+
+  Parent -- "executeTransfer (allowlist-checked)" --> Exch1
+  Parent -- "executeTransfer" --> Exch2
+  Parent -. "CREATE_CHILD (quorum)" .-> ChildA
+  Parent -. "ALLOCATE_CHILD (quorum)" .-> ChildA
+  ChildA -. "RECLAIM_CHILD → Parent" .-> Parent
+  Parent -. CREATE_CHILD .-> ChildB
+
+  ChildA -- account.delegate --> BPA[(BP-A)]
+  ChildB -- account.delegate --> BPB[(BP-B)]
+
+  classDef ext fill:#eef,stroke:#55a;
+```
+
+`executeSetupChild` gains an `initialDelegate: PublicKey` parameter — the
+child's stake is pointed at the approved BP atomically with setup, so
+there is no "child exists but unstaked" window on-chain. The parent's
+`CREATE_CHILD` `proposal.data` binds all eight child-config fields:
+
+```
+Poseidon.hash([
+  ownersCommitment, threshold, numOwners,
+  delegationKeyHash,
+  recipientAllowlistRoot, enforceRecipientAllowlist,
+  initialDelegate.x, initialDelegate.isOdd,
+])
+```
+
+This widens the CREATE_CHILD ABI — pre-upgrade parents cannot finalize
+pre-upgrade proposals under the new VK.
+
+### New Events
+
+| Event | Fields | Emitted By |
+| ----- | ------ | ---------- |
+| `SingleKeyDelegateEvent` | `delegate, nonce` | `executeDelegateSingleKey` |
+| `RecipientAllowlistChangeEvent` | `proposalHash, recipient, added, newRoot` | `executeUpdateRecipientAllowlist` |
+
+`SetupEvent` is extended with `delegationKeyHash`, `recipientAllowlistRoot`,
+`enforceRecipientAllowlist` — a breaking schema change that pairs with
+the VK rotation.
