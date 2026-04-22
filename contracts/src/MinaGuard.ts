@@ -869,6 +869,8 @@ export class MinaGuard extends SmartContract {
     const isReclaimChild = proposal.txType.equals(TxType.RECLAIM_CHILD);
     const isDestroyChild = proposal.txType.equals(TxType.DESTROY_CHILD);
     const isEnableChildMultiSig = proposal.txType.equals(TxType.ENABLE_CHILD_MULTI_SIG);
+    const isAddRecipient = proposal.txType.equals(TxType.ADD_RECIPIENT);
+    const isRemoveRecipient = proposal.txType.equals(TxType.REMOVE_RECIPIENT);
 
     isTransfer
       .or(isChangeThreshold)
@@ -880,6 +882,8 @@ export class MinaGuard extends SmartContract {
       .or(isReclaimChild)
       .or(isDestroyChild)
       .or(isEnableChildMultiSig)
+      .or(isAddRecipient)
+      .or(isRemoveRecipient)
       .assertTrue('Unknown txType');
 
     /*
@@ -888,13 +892,15 @@ export class MinaGuard extends SmartContract {
     * - For the owner to-be-added/to-be-removed (only index 0 is allowed to be non-empty)
     * - For delegate, (1..=N-1) must be empty, index 0 is either delegate addr or empty for undelegate
     * - For threshold change, all must be empty
+    * - For ADD/REMOVE_RECIPIENT, only index 0 carries the recipient pubkey
     */
 
     const slot0Empty = proposal.receivers[0].address.equals(PublicKey.empty());
 
-    // Rule 1: ADD_OWNER / REMOVE_OWNER require non-empty slot 0
-    const needsPubKey = isAddOwner.or(isRemoveOwner);
-    needsPubKey.and(slot0Empty).assertFalse('addOwner/removeOwner requires target pubkey in receivers[0]');
+    // Rule 1: ADD_OWNER / REMOVE_OWNER / ADD_RECIPIENT / REMOVE_RECIPIENT
+    // require non-empty slot 0.
+    const needsPubKey = isAddOwner.or(isRemoveOwner).or(isAddRecipient).or(isRemoveRecipient);
+    needsPubKey.and(slot0Empty).assertFalse('governance proposal requires target pubkey in receivers[0]');
 
     // Rule 2: CHANGE_THRESHOLD requires empty slot 0
     isChangeThreshold.and(slot0Empty.not()).assertFalse('changeThreshold must have empty receivers[0]');
@@ -1267,6 +1273,80 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('delegate', {
       proposalHash,
       delegate: targetDelegate,
+    });
+  }
+
+  /**
+   * Executes an ADD_RECIPIENT or REMOVE_RECIPIENT proposal once threshold
+   * is satisfied, flipping the entry for `receivers[0].address` in the
+   * on-chain recipient-allowlist MerkleMap.
+   *
+   * ADD asserts current value == 0 (idempotent: cannot double-add).
+   * REMOVE asserts current value == 1 (idempotent: cannot remove a
+   * non-member). The witness is keyed by
+   * Poseidon.hashWithPrefix('recipient', recipient.toFields()).
+   */
+  @method async executeUpdateRecipientAllowlist(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field,
+    allowlistWitness: MerkleMapWitness,
+    currentAllowlistValue: Field,
+  ) {
+    this.assertChildMultiSigEnabledIfChild();
+    this.getInitializedOwnersCommitment();
+
+    const isAdd = proposal.txType.equals(TxType.ADD_RECIPIENT);
+    const isRemove = proposal.txType.equals(TxType.REMOVE_RECIPIENT);
+    isAdd.or(isRemove).assertTrue('Not a recipient-allowlist update tx');
+    this.assertLocalProposal(proposal);
+
+    const proposalHash = proposal.hash();
+
+    this.assertProposalConfigNetworkAndGuard(proposal);
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
+
+    const { threshold } = this.getGovernanceState();
+    this.assertThresholdSatisfied(approvalCount, threshold);
+
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
+
+    const recipient = proposal.receivers[0].address;
+    recipient.equals(PublicKey.empty()).assertFalse('Recipient must be non-empty');
+
+    const expectedRoot = this.recipientAllowlistRoot.getAndRequireEquals();
+    const expectedKey = Poseidon.hashWithPrefix(
+      RECIPIENT_ALLOWLIST_KEY_PREFIX,
+      recipient.toFields(),
+    );
+
+    const [computedRoot, computedKey] =
+      allowlistWitness.computeRootAndKey(currentAllowlistValue);
+    computedRoot.assertEquals(expectedRoot, 'Recipient allowlist root mismatch');
+    computedKey.assertEquals(expectedKey, 'Recipient allowlist key mismatch');
+
+    // ADD: current must be 0; REMOVE: current must be 1.
+    const expectedCurrent = Provable.if(isAdd, Field(0), Field(1));
+    currentAllowlistValue.assertEquals(expectedCurrent, 'Recipient allowlist entry in wrong state for this op');
+
+    const newValue = Provable.if(isAdd, Field(1), Field(0));
+    const [newRoot] = allowlistWitness.computeRootAndKey(newValue);
+    this.recipientAllowlistRoot.set(newRoot);
+
+    this.markExecuted(approvalWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+
+    this.emitEvent('recipientAllowlistChange', {
+      proposalHash,
+      recipient,
+      added: isAdd.toField(),
+      newRoot,
     });
   }
 
