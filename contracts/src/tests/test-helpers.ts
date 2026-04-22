@@ -1,11 +1,13 @@
 import {
   Field,
+  MerkleMap,
   Mina,
   PrivateKey,
   PublicKey,
   AccountUpdate,
   Signature,
   Poseidon,
+  UInt32,
   UInt64,
   Bool,
   MerkleMapWitness,
@@ -14,6 +16,7 @@ import {
   MinaGuard,
   Receiver,
   SetupOwnersInput,
+  RecipientAllowlistCheck,
   TransactionProposal,
 } from '../MinaGuard.js';
 import {
@@ -22,8 +25,10 @@ import {
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  DELEGATION_KEY_HASH_PREFIX,
+  EMPTY_MERKLE_MAP_ROOT,
 } from '../constants.js';
-import { ApprovalStore, VoteNullifierStore } from '../storage.js';
+import { ApprovalStore, RecipientAllowlistStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
 
 // -- Types -------------------------------------------------------------------
@@ -38,6 +43,14 @@ export interface TestContext {
   owners: { key: PrivateKey; pub: PublicKey }[];
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
+  recipientAllowlistStore: RecipientAllowlistStore;
+  /**
+   * Single-key delegation identity for this guard. Defaulted to a freshly
+   * generated keypair so every test has the path enabled. Tests that want
+   * the "disabled" state can pass `PublicKey.empty()` to `deployAndSetup`
+   * via `opts.delegationKey`.
+   */
+  delegationKey: { key: PrivateKey; pub: PublicKey };
   networkId: Field;
 }
 
@@ -109,7 +122,14 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
 
   const approvalStore = new ApprovalStore();
   const nullifierStore = new VoteNullifierStore();
+  const recipientAllowlistStore = new RecipientAllowlistStore();
   const networkId = Field(1);
+
+  const delegationKeyPriv = PrivateKey.random();
+  const delegationKey = {
+    key: delegationKeyPriv,
+    pub: delegationKeyPriv.toPublicKey(),
+  };
 
   return {
     zkApp,
@@ -120,6 +140,8 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
     owners,
     approvalStore,
     nullifierStore,
+    recipientAllowlistStore,
+    delegationKey,
     networkId,
   };
 }
@@ -128,10 +150,22 @@ export function getOwnersCommitment(ctx: TestContext): Field {
   return computeOwnerChain(ctx.owners.map((o) => o.pub));
 }
 
-/** Deploys MinaGuard, funds it, and performs one-time setup. */
+/**
+ * Deploys MinaGuard, funds it, and performs one-time setup.
+ *
+ * `opts.delegationKey` lets a test opt into "disabled" by passing
+ * `PublicKey.empty()` or substitute a different key. Default = ctx.delegationKey.pub.
+ * `opts.recipientAllowlistRoot` + `opts.enforceRecipientAllowlist` default to
+ * empty-map + disabled (no recipient enforcement).
+ */
 export async function deployAndSetup(
   ctx: TestContext,
-  threshold = 2
+  threshold = 2,
+  opts: {
+    delegationKey?: PublicKey;
+    recipientAllowlistRoot?: Field;
+    enforceRecipientAllowlist?: Field;
+  } = {},
 ): Promise<void> {
   const { zkApp, zkAppKey, zkAppAddress, deployerKey, deployerAccount, owners } = ctx;
 
@@ -152,13 +186,20 @@ export async function deployAndSetup(
   const ownersCommitment = computeOwnerChain(owners.map((o) => o.pub));
   const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
 
+  const delegationKey = opts.delegationKey ?? ctx.delegationKey.pub;
+  const recipientAllowlistRoot = opts.recipientAllowlistRoot ?? ctx.recipientAllowlistStore.getRoot();
+  const enforceRecipientAllowlist = opts.enforceRecipientAllowlist ?? Field(0);
+
   const setupTxn = await Mina.transaction(deployerAccount, async () => {
     await zkApp.setup(
       ownersCommitment,
       Field(threshold),
       Field(owners.length),
       ctx.networkId,
-      new SetupOwnersInput({ owners: setupOwners })
+      new SetupOwnersInput({ owners: setupOwners }),
+      delegationKey,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
     );
   });
   await setupTxn.prove();
@@ -339,9 +380,41 @@ export function createUndelegateProposal(
 // -- Child Proposal Helpers --------------------------------------------------
 
 /**
+ * Computes the Poseidon commitment binding a child's full setup config
+ * into its CREATE_CHILD proposal.data. Mirrors the on-chain hash in
+ * executeSetupChild.
+ */
+export function childConfigHash(
+  ownersCommitment: Field,
+  threshold: Field,
+  numOwners: Field,
+  delegationKey: PublicKey = PublicKey.empty(),
+  recipientAllowlistRoot: Field = EMPTY_MERKLE_MAP_ROOT,
+  enforceRecipientAllowlist: Field = Field(0),
+  initialDelegate: PublicKey = PublicKey.empty(),
+): Field {
+  const isDelegationDisabled = delegationKey.equals(PublicKey.empty()).toBoolean();
+  const delegationKeyHash = isDelegationDisabled
+    ? Field(0)
+    : Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, delegationKey.toFields());
+  return Poseidon.hash([
+    ownersCommitment,
+    threshold,
+    numOwners,
+    delegationKeyHash,
+    recipientAllowlistRoot,
+    enforceRecipientAllowlist,
+    ...initialDelegate.toFields(),
+  ]);
+}
+
+/**
  * Builds a CREATE_CHILD proposal. `data` is the Poseidon commitment of the
  * child's intended config so the child's executeSetupChild can bind to it.
  * REMOTE destination, targets the given child address.
+ *
+ * The trailing child-config args default to the "disabled" configuration
+ * (no delegation key, no recipient allowlist, no initial delegate).
  */
 export function createCreateChildProposal(
   childAccount: PublicKey,
@@ -353,12 +426,24 @@ export function createCreateChildProposal(
   guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1),
+  delegationKey: PublicKey = PublicKey.empty(),
+  recipientAllowlistRoot: Field = EMPTY_MERKLE_MAP_ROOT,
+  enforceRecipientAllowlist: Field = Field(0),
+  initialDelegate: PublicKey = PublicKey.empty(),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CREATE_CHILD,
-    data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
+    data: childConfigHash(
+      ownersCommitment,
+      threshold,
+      numOwners,
+      delegationKey,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
+      initialDelegate,
+    ),
     uid,
     configNonce,
     expiryBlock,
@@ -508,7 +593,10 @@ export async function proposeTransaction(
   await txn.sign([proposer.key]).send();
 
   nullifierStore.nullify(proposalHash, proposer.pub);
-  approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
+  // Separation of duties: propose stores PROPOSED_MARKER (0 approvals).
+  // The proposer's own signature authenticates only — it does not count
+  // as an approval.
+  approvalStore.setCount(proposalHash, PROPOSED_MARKER);
 
   return proposalHash;
 }
@@ -602,12 +690,23 @@ export async function deployAndSetupChildGuard(
   childThreshold: number,
   signerIndices: number[],
   uid = Field(0),
+  opts: {
+    childDelegationKey?: PublicKey;
+    childRecipientAllowlistRoot?: Field;
+    childEnforceRecipientAllowlist?: Field;
+    childInitialDelegate?: PublicKey;
+  } = {},
 ): Promise<{ proposalHash: Field }> {
   const { deployerAccount, deployerKey, networkId } = parentCtx;
 
   const ownersCommitment = computeOwnerChain(childOwners);
   const thresholdField = Field(childThreshold);
   const numOwnersField = Field(childOwners.length);
+
+  const childDelegationKey = opts.childDelegationKey ?? PublicKey.empty();
+  const childRecipientAllowlistRoot = opts.childRecipientAllowlistRoot ?? EMPTY_MERKLE_MAP_ROOT;
+  const childEnforceRecipientAllowlist = opts.childEnforceRecipientAllowlist ?? Field(0);
+  const childInitialDelegate = opts.childInitialDelegate ?? PublicKey.empty();
 
   const proposal = createCreateChildProposal(
     childAddress,
@@ -619,6 +718,10 @@ export async function deployAndSetupChildGuard(
     parentAddress,
     Field(0),
     networkId,
+    childDelegationKey,
+    childRecipientAllowlistRoot,
+    childEnforceRecipientAllowlist,
+    childInitialDelegate,
   );
 
   const { proposalHash, parentApprovalCount, parentApprovalWitness } =
@@ -639,6 +742,10 @@ export async function deployAndSetupChildGuard(
       proposal,
       parentApprovalWitness,
       parentApprovalCount,
+      childDelegationKey,
+      childRecipientAllowlistRoot,
+      childEnforceRecipientAllowlist,
+      childInitialDelegate,
     );
   });
   await atomicTxn.prove();
@@ -665,4 +772,110 @@ export async function fundAccount(
   });
   await txn.prove();
   await txn.sign([deployerKey]).send();
+}
+
+// -- Recipient Allowlist Proposal Helpers -----------------------------------
+
+export function createAddRecipientProposal(
+  recipient: PublicKey,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: singleReceiverArray(recipient),
+    tokenId: Field(0),
+    txType: TxType.ADD_RECIPIENT,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
+export function createRemoveRecipientProposal(
+  recipient: PublicKey,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: singleReceiverArray(recipient),
+    tokenId: Field(0),
+    txType: TxType.REMOVE_RECIPIENT,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
+/**
+ * Builds the per-receiver witness + value bundle consumed by executeTransfer.
+ * Empty slots and non-enforcing guards get empty-map witnesses + Field(0);
+ * real allowed recipients get their Merkle witness + Field(1).
+ */
+export function buildRecipientAllowlistCheck(
+  proposal: TransactionProposal,
+  store: RecipientAllowlistStore,
+  enforceRecipientAllowlist: boolean,
+): RecipientAllowlistCheck {
+  const dummyMap = new MerkleMap();
+  const witnesses: MerkleMapWitness[] = [];
+  const values: Field[] = [];
+  for (let i = 0; i < MAX_RECEIVERS; i++) {
+    const addr = proposal.receivers[i].address;
+    const isEmpty = addr.equals(PublicKey.empty()).toBoolean();
+    if (!enforceRecipientAllowlist || isEmpty) {
+      witnesses.push(dummyMap.getWitness(Field(0)));
+      values.push(Field(0));
+    } else {
+      witnesses.push(store.getWitness(addr));
+      values.push(store.getValue(addr));
+    }
+  }
+  return new RecipientAllowlistCheck({ witnesses, values });
+}
+
+// -- Single-Key Delegation Helper -------------------------------------------
+
+/**
+ * Produces a signature over the canonical single-key delegation message:
+ *   [...delegate.toFields(), ...guardAddress.toFields(), networkId, nonce, expiryBlock]
+ *
+ * Field order MUST match `MinaGuard.executeDelegateSingleKey`. Do not
+ * reorder — any UI or external signer must produce the same sequence or
+ * signature verification fails with the generic "Invalid delegation
+ * signature" error.
+ */
+export function signSingleKeyDelegate(params: {
+  delegationKey: PrivateKey;
+  delegate: PublicKey;
+  guardAddress: PublicKey;
+  networkId: Field;
+  nonce: Field;
+  expiryBlock?: UInt32;
+}): { signature: Signature; expiryBlock: UInt32 } {
+  const expiryBlock = params.expiryBlock ?? UInt32.from(0);
+  const msg = [
+    ...params.delegate.toFields(),
+    ...params.guardAddress.toFields(),
+    params.networkId,
+    params.nonce,
+    expiryBlock.value,
+  ];
+  const signature = Signature.create(params.delegationKey, msg);
+  return { signature, expiryBlock };
 }
