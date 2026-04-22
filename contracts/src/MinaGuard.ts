@@ -887,7 +887,11 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, Field(0));
 
-    const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER.add(1));
+    // Separation of duties: propose records PROPOSED_MARKER (0 approvals).
+    // The proposer's signature authenticates the propose but does NOT
+    // count as an approval. Proposer is still blocked from later approving
+    // via the vote-nullifier write above.
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('proposal', {
@@ -906,12 +910,6 @@ export class MinaGuard extends SmartContract {
     });
 
     this.emitReceiversEvent(proposal, proposalHash);
-
-    this.emitEvent('approval', {
-      proposalHash,
-      approver: proposer,
-      approvalCount: PROPOSED_MARKER.add(1),
-    });
   }
 
   /** Verifies and records a non-proposer owner approval for an existing proposal. */
