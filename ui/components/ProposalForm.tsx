@@ -29,6 +29,7 @@ export default function ProposalForm({
   const [transferLines, setTransferLines] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
+  const [recipientAddress, setRecipientAddress] = useState('');
   const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
   useEffect(() => {
     setNewThreshold(Math.max(1, currentThreshold));
@@ -135,6 +136,13 @@ export default function ProposalForm({
       setValidationError('The new threshold is the same as the current one.');
       return;
     }
+    if (
+      (txType === 'addRecipient' || txType === 'removeRecipient')
+      && !recipientAddress.trim().match(/^B62[A-Za-z0-9]{40,}$/)
+    ) {
+      setValidationError('Enter a valid B62… recipient address.');
+      return;
+    }
 
     onSubmit({
       txType,
@@ -144,6 +152,10 @@ export default function ProposalForm({
           : undefined,
       newOwner: txType === 'addOwner' ? newOwner : undefined,
       removeOwnerAddress: txType === 'removeOwner' ? removeOwnerAddress : undefined,
+      recipientAddress:
+        txType === 'addRecipient' || txType === 'removeRecipient'
+          ? recipientAddress.trim()
+          : undefined,
       newThreshold: txType === 'changeThreshold' ? newThreshold : undefined,
       delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
       undelegate: txType === 'setDelegate' ? undelegate : undefined,
@@ -358,6 +370,24 @@ export default function ProposalForm({
           mono
           required
         />
+      )}
+
+      {(txType === 'addRecipient' || txType === 'removeRecipient') && (
+        <div className="space-y-2">
+          <FormInput
+            label={txType === 'addRecipient' ? 'Recipient to add to allowlist' : 'Recipient to remove from allowlist'}
+            value={recipientAddress}
+            onChange={setRecipientAddress}
+            placeholder="B62q..."
+            mono
+            required
+          />
+          <p className="text-xs text-safe-text opacity-70">
+            {txType === 'addRecipient'
+              ? 'Once approved, executeTransfer will accept this address as a destination. ADD fails if already present.'
+              : 'Once approved, executeTransfer will reject this address. REMOVE fails if the address is not currently allowed.'}
+          </p>
+        </div>
       )}
 
       {txType === 'removeOwner' && (
