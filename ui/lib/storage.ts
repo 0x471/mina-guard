@@ -57,6 +57,14 @@ export interface PendingSubaccount {
   proposalHash: string;
   expiryBlock: number | null;
   createdAt: string;
+  /**
+   * Optional child config captured at propose time so the finalize step
+   * rebuilds the same CREATE_CHILD data hash as the on-chain proposal.
+   * Omitted fields default to disabled/empty in `executeSetupChild`.
+   */
+  childDelegationKey?: string | null;
+  childEnforceRecipientAllowlist?: boolean;
+  childInitialDelegate?: string | null;
 }
 
 const PENDING_SUBACCOUNTS_KEY = getKey('pending-subaccounts');

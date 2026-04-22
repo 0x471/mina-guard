@@ -472,6 +472,9 @@ function PendingSubaccountsBanner({
         childOwners: record.childOwners,
         childThreshold: record.childThreshold,
         proposal,
+        childDelegationKey: record.childDelegationKey ?? null,
+        childEnforceRecipientAllowlist: record.childEnforceRecipientAllowlist ?? false,
+        childInitialDelegate: record.childInitialDelegate ?? null,
       }, onProgress, signer);
       return result;
     });

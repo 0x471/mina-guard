@@ -65,6 +65,12 @@ function CreateAccountWizard() {
   const [generating, setGenerating] = useState(false);
   const [ownerFields, setOwnerFields] = useState<string[]>(['']);
   const [threshold, setThreshold] = useState('');
+  // Optional delegation key (enables single-key staking rotation after setup).
+  const [delegationKey, setDelegationKey] = useState('');
+  // Optional on-chain recipient allowlist enforcement on executeTransfer.
+  const [enforceRecipientAllowlist, setEnforceRecipientAllowlist] = useState(false);
+  // Optional initial delegate (child only — sets account.delegate atomically with executeSetupChild).
+  const [initialDelegate, setInitialDelegate] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
@@ -101,8 +107,18 @@ function CreateAccountWizard() {
     if (parsedOwners.length > MAX_OWNERS) return `Maximum ${MAX_OWNERS} owners allowed.`;
     const t = Number(threshold);
     if (!threshold.trim()) return 'Please choose a threshold.';
-    if (!t || t < 1) return 'Threshold must be at least 1.';
+    // Separation of duties: propose no longer auto-approves, so a 1-of-N
+    // vault cannot execute anything — threshold must be at least 2.
+    if (!t || t < 2) return 'Threshold must be at least 2 (separation of duties).';
     if (t > parsedOwners.length) return `Threshold (${t}) cannot exceed owners (${parsedOwners.length}).`;
+    const dk = delegationKey.trim();
+    if (dk && (!dk.startsWith('B62') || dk.length < 50)) {
+      return 'Delegation key must be a valid base58 public key (or empty).';
+    }
+    const id = initialDelegate.trim();
+    if (id && (!id.startsWith('B62') || id.length < 50)) {
+      return 'Initial delegate must be a valid base58 public key (or empty).';
+    }
     return null;
   };
 
@@ -118,6 +134,8 @@ function CreateAccountWizard() {
       owners: parsedOwners,
       threshold: Number(threshold),
       networkId: network.networkId,
+      delegationKey: delegationKey.trim() || null,
+      enforceRecipientAllowlist,
     };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     try {
@@ -156,11 +174,18 @@ function CreateAccountWizard() {
     const childPrivateKey = keypair.privateKey;
     const childAddress = keypair.publicKey;
 
+    const childDelegationKey = delegationKey.trim() || null;
+    const childInitialDelegate = initialDelegate.trim() || null;
+    const childEnforceRecipientAllowlist = enforceRecipientAllowlist;
+
     void startOperation('Preparing subaccount proposal…', async (onProgress) => {
       onProgress('Computing child config hash…');
       const { configHash } = await computeCreateChildConfigHash({
         childOwners: parsedOwners,
         childThreshold,
+        childDelegationKey,
+        childEnforceRecipientAllowlist,
+        childInitialDelegate,
       });
 
       const proposalHash = await createOnchainProposal({
@@ -189,6 +214,9 @@ function CreateAccountWizard() {
         proposalHash,
         expiryBlock: null,
         createdAt: new Date().toISOString(),
+        childDelegationKey,
+        childEnforceRecipientAllowlist,
+        childInitialDelegate,
       });
 
       return `Subaccount proposal submitted. Approve on the parent, then return to finalize deployment.`;
@@ -363,15 +391,68 @@ function CreateAccountWizard() {
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
-                          min={1}
-                          max={Math.max(1, parsedOwners.length)}
+                          min={2}
+                          max={Math.max(2, parsedOwners.length)}
                           value={threshold}
                           onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
                           className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green"
                         />
                         <span className="text-sm text-safe-text">out of {parsedOwners.length}</span>
                       </div>
+                      <span className="text-xs text-safe-text opacity-70">
+                        Minimum 2 — separation of duties: the proposer cannot approve their own request.
+                      </span>
                     </label>
+
+                    {/* Advanced: delegation + allowlist */}
+                    <details className="border border-safe-border rounded-lg px-4 py-3 bg-safe-dark">
+                      <summary className="cursor-pointer text-sm font-medium">Advanced (optional)</summary>
+                      <div className="mt-3 space-y-3">
+                        <label className="space-y-1 block">
+                          <span className="text-xs text-safe-text">Delegation key (base58, optional)</span>
+                          <input
+                            type="text"
+                            value={delegationKey}
+                            onChange={(e) => { setDelegationKey(e.target.value); setFormError(null); }}
+                            placeholder="B62… (leave empty to disable single-key delegation)"
+                            className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-safe-green"
+                          />
+                          <span className="text-xs text-safe-text opacity-70">
+                            Lets a single key rotate the stake delegate without multisig approval. Cannot be changed after setup.
+                          </span>
+                        </label>
+
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={enforceRecipientAllowlist}
+                            onChange={(e) => setEnforceRecipientAllowlist(e.target.checked)}
+                          />
+                          <span className="text-sm">Enforce on-chain recipient allowlist for transfers</span>
+                        </label>
+                        {enforceRecipientAllowlist && (
+                          <p className="text-xs text-yellow-400">
+                            The allowlist starts empty. After setup, propose ADD_RECIPIENT via multisig before transferring anywhere.
+                          </p>
+                        )}
+
+                        {isSubaccount && (
+                          <label className="space-y-1 block">
+                            <span className="text-xs text-safe-text">Initial stake delegate (base58, optional)</span>
+                            <input
+                              type="text"
+                              value={initialDelegate}
+                              onChange={(e) => { setInitialDelegate(e.target.value); setFormError(null); }}
+                              placeholder="Block producer address — leave empty to stake to self"
+                              className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-safe-green"
+                            />
+                            <span className="text-xs text-safe-text opacity-70">
+                              Child applies this delegate atomically with setup — part of the parent's CREATE_CHILD approval.
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                    </details>
 
                     {formError && <p className="text-sm text-red-400">{formError}</p>}
                   </div>
