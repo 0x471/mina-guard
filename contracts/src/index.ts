@@ -13,6 +13,8 @@ export {
   OwnerChangeEvent,
   ThresholdChangeEvent,
   DelegateEvent,
+  SingleKeyDelegateEvent,
+  RecipientAllowlistChangeEvent,
   CreateChildEvent,
   ReclaimChildEvent,
   EnableChildMultiSigEvent,

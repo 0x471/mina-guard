@@ -178,6 +178,25 @@ export class DelegateEvent extends Struct({
   delegate: PublicKey,
 }) { }
 
+/**
+ * Emitted by executeDelegateSingleKey. Deliberately omits the delegation
+ * key pubkey — attribution is deterministic per guard and resolvable from
+ * SetupEvent.delegationKeyHash. `nonce` is the pre-increment value, so
+ * events order naturally.
+ */
+export class SingleKeyDelegateEvent extends Struct({
+  delegate: PublicKey,
+  nonce: Field,
+}) { }
+
+/** Emitted when the recipient allowlist mutates via multisig governance. */
+export class RecipientAllowlistChangeEvent extends Struct({
+  proposalHash: Field,
+  recipient: PublicKey,
+  added: Field,
+  newRoot: Field,
+}) { }
+
 /** Emitted when a child guard successfully runs executeSetupChild. */
 export class CreateChildEvent extends Struct({
   proposalHash: Field,
@@ -243,6 +262,8 @@ export class MinaGuard extends SmartContract {
     ownerChange: OwnerChangeEvent,
     thresholdChange: ThresholdChangeEvent,
     delegate: DelegateEvent,
+    singleKeyDelegate: SingleKeyDelegateEvent,
+    recipientAllowlistChange: RecipientAllowlistChangeEvent,
     createChild: CreateChildEvent,
     reclaimChild: ReclaimChildEvent,
     enableChildMultiSig: EnableChildMultiSigEvent,
