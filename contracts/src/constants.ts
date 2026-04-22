@@ -13,6 +13,9 @@ export const PROPOSED_MARKER = Field(1);
 export const EXECUTED_MARKER = Field(0).sub(1);
 export const EMPTY_MERKLE_MAP_ROOT = new MerkleMap().getRoot();
 
+export const DELEGATION_KEY_HASH_PREFIX = 'delegation-key';
+export const RECIPIENT_ALLOWLIST_KEY_PREFIX = 'recipient';
+
 export const TxType = {
   TRANSFER: Field(0),
   ADD_OWNER: Field(1),
@@ -24,6 +27,8 @@ export const TxType = {
   RECLAIM_CHILD: Field(7),
   DESTROY_CHILD: Field(8),
   ENABLE_CHILD_MULTI_SIG: Field(9),
+  ADD_RECIPIENT: Field(10),
+  REMOVE_RECIPIENT: Field(11),
 };
 
 export const Destination = {
