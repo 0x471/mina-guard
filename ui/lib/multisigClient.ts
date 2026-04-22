@@ -150,6 +150,9 @@ export async function setupContract(params: {
   owners: string[];
   threshold: number;
   networkId: string;
+  delegationKey?: string | null;
+  recipientAllowlistRoot?: string | null;
+  enforceRecipientAllowlist?: boolean;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
@@ -162,9 +165,41 @@ export async function deployAndSetupContract(params: {
   owners: string[];
   threshold: number;
   networkId: string;
+  delegationKey?: string | null;
+  recipientAllowlistRoot?: string | null;
+  enforceRecipientAllowlist?: boolean;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
+}
+
+/**
+ * Rotates a guard's staking delegate using its committed delegation key.
+ * The connected wallet must be that delegation key. Delegate = null/empty
+ * means "undelegate to self." Ledger is not supported on this path —
+ * the contract verifies a signature over a 7-field message which Ledger
+ * cannot sign on-device.
+ */
+export async function executeSingleKeyDelegate(params: {
+  guardAddress: string;
+  delegationKeyPub: string;
+  delegate: string | null;
+  expiryBlock?: string | null;
+  feePayerAddress: string;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  if (signer && 'type' in signer && (signer as { type?: string }).type === 'ledger') {
+    throw new Error(
+      'Ledger is not supported for single-key delegation. Use Auro, or fall back to multisig executeDelegate.',
+    );
+  }
+  await assertLedgerReady(signer);
+  return getWorkerApi().executeSingleKeyDelegate(
+    params,
+    proxiedSignFields(signer),
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
+  );
 }
 
 /** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash on success. */
@@ -224,6 +259,10 @@ export async function executeProposalOnchain(params: {
 export async function computeCreateChildConfigHash(params: {
   childOwners: string[];
   childThreshold: number;
+  childDelegationKey?: string | null;
+  childRecipientAllowlistRoot?: string | null;
+  childEnforceRecipientAllowlist?: boolean;
+  childInitialDelegate?: string | null;
 }): Promise<{
   ownersCommitment: string;
   configHash: string;
@@ -244,6 +283,10 @@ export async function deployAndSetupChildOnchain(params: {
   childOwners: string[];
   childThreshold: number;
   proposal: Proposal;
+  childDelegationKey?: string | null;
+  childRecipientAllowlistRoot?: string | null;
+  childEnforceRecipientAllowlist?: boolean;
+  childInitialDelegate?: string | null;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().deployAndSetupChildOnchain(
