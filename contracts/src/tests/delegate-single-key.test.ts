@@ -4,9 +4,7 @@ import {
   Mina,
   PrivateKey,
   PublicKey,
-  Signature,
   UInt32,
-  UInt64,
 } from 'o1js';
 import { MinaGuard, SetupOwnersInput } from '../MinaGuard.js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
