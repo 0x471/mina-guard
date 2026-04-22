@@ -1207,6 +1207,88 @@ export class MinaGuard extends SmartContract {
     });
   }
 
+  /**
+   * Sets the stake delegate via a single signature from the guard's committed
+   * delegation key. Coexists with the multisig `executeDelegate` path — both
+   * paths remain active, with multisig as the emergency fallback if the
+   * delegation key is lost.
+   *
+   * Replay protection is independent of the multisig path. None of
+   * approvalRoot / voteNullifierRoot / configNonce apply here. The signed
+   * message binds:
+   *   - the chosen delegate (no redirection after signing),
+   *   - this guard's address (signatures don't replay across sibling guards
+   *     sharing the same delegation key),
+   *   - the network id (no cross-network replay),
+   *   - the per-guard delegationNonce (monotonic; no classic replay),
+   *   - expiryBlock (lost offline-produced signatures expire).
+   *
+   * `childMultiSigEnabled == 0` blocks this path too — a parent-frozen child
+   * must remain inert across every authorization channel.
+   */
+  @method async executeDelegateSingleKey(
+    delegate: PublicKey,
+    delegationKey: PublicKey,
+    expiryBlock: UInt32,
+    signature: Signature,
+  ) {
+    this.assertChildMultiSigEnabledIfChild();
+    this.getInitializedOwnersCommitment();
+
+    // "Disabled" check runs first so a caller cannot probe arbitrary pubkeys
+    // against a disabled guard — the mismatch error would otherwise leak the
+    // disabled state.
+    const storedHash = this.delegationKeyHash.getAndRequireEquals();
+    storedHash.assertNotEquals(Field(0), 'Single-key delegation not configured');
+
+    const computedHash = Poseidon.hashWithPrefix(
+      DELEGATION_KEY_HASH_PREFIX,
+      delegationKey.toFields(),
+    );
+    computedHash.assertEquals(storedHash, 'Delegation key hash mismatch');
+
+    const nonce = this.delegationNonce.getAndRequireEquals();
+    const networkId = this.networkId.getAndRequireEquals();
+
+    // Optional expiry: expiryBlock == 0 means no expiry, matching
+    // TransactionProposal.expiryBlock semantics.
+    const hasExpiry = expiryBlock.value.equals(Field(0)).not();
+    const blockHeight = this.network.blockchainLength.getAndRequireEquals();
+    hasExpiry
+      .not()
+      .or(blockHeight.lessThanOrEqual(expiryBlock))
+      .assertTrue('Single-key delegation expired');
+
+    // Canonical signed message. Field order is part of the external signing
+    // contract — do not reorder without updating UI / test / CLI signers.
+    const msg = [
+      ...delegate.toFields(),
+      ...this.address.toFields(),
+      networkId,
+      nonce,
+      expiryBlock.value,
+    ];
+    signature
+      .verify(delegationKey, msg)
+      .assertTrue('Invalid delegation signature');
+
+    const isUndelegate = delegate.equals(PublicKey.empty());
+    const targetDelegate = Provable.if(
+      isUndelegate,
+      PublicKey,
+      this.address,
+      delegate,
+    );
+    this.account.delegate.set(targetDelegate);
+
+    this.delegationNonce.set(nonce.add(1));
+
+    this.emitEvent('singleKeyDelegate', {
+      delegate: targetDelegate,
+      nonce,
+    });
+  }
+
   // -- Child Lifecycle Methods (REMOTE proposals, run on the child) ---------
 
   /**
