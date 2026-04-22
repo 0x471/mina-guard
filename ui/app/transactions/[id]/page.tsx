@@ -94,7 +94,8 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Submitting approval on-chain...', async (onProgress) => {
-      const result = await approveProposalOnchain({
+      const { approveProposalViaBackend } = await import('@/lib/multisigClient');
+      const result = await approveProposalViaBackend({
         contractAddress: captured.contractAddress,
         approverAddress: captured.approverAddress,
         proposal: captured.proposal,
@@ -142,6 +143,20 @@ export default function TransactionDetailPage() {
 
       if (captured.proposal.txType === 'createChild') {
         return 'CREATE_CHILD proposals finalize via the parent detail page → Pending Subaccounts → Finalize deployment.';
+      }
+
+      // TRANSFER uses the backend prover (no browser compile). Other LOCAL
+      // execute types (owner change, threshold change, delegate,
+      // allocate-to-children, recipient-allowlist updates) still use the
+      // WebWorker path until their backend endpoints ship.
+      if (captured.proposal.txType === 'transfer') {
+        const { executeTransferViaBackendPath } = await import('@/lib/multisigClient');
+        const result = await executeTransferViaBackendPath({
+          contractAddress: captured.contractAddress,
+          proposal: captured.proposal,
+        }, onProgress);
+        if (result) success = true;
+        return result;
       }
 
       const result = await executeProposalOnchain({

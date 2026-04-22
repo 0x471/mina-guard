@@ -85,7 +85,8 @@ function NewTransactionPageInner() {
     await startOperation('Submitting proposal on-chain...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      const proposalHash = await createOnchainProposal({
+      const { createProposalViaBackend } = await import('@/lib/multisigClient');
+      const proposalHash = await createProposalViaBackend({
         contractAddress,
         proposerAddress,
         input: data,

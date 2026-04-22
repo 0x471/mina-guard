@@ -174,6 +174,91 @@ export async function deployAndSetupContract(params: {
 }
 
 /**
+ * Backend-proving propose. Worker builds the proposal struct (no compile),
+ * Auro signs the proposalHash (1 Field — Ledger-compatible), backend does
+ * compile+prove+submit. Avoids the browser WebWorker's MinaGuard compile.
+ */
+export async function createProposalViaBackend(params: {
+  contractAddress: string;
+  proposerAddress: string;
+  input: NewProposalInput;
+  configNonce: number;
+  networkId: string;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const { proposeViaBackend } = await import('./api');
+  const { getAuroSignFields } = await import('./auroWallet');
+  await assertLedgerReady(signer);
+  const progress = proxiedProgress(onProgress);
+  progress('Building proposal...');
+  const { proposalJson, proposalHash } = await getWorkerApi().buildNewProposalForBackend({
+    contractAddress: params.contractAddress,
+    input: params.input,
+    configNonce: params.configNonce,
+    networkId: params.networkId,
+  });
+  progress('Requesting Auro signature...');
+  const signed = await getAuroSignFields([proposalHash]);
+  if (!signed) throw new Error('User rejected or Auro signature failed');
+  progress('Submitting to backend prover...');
+  const result = await proposeViaBackend({
+    proposal: proposalJson as never,
+    proposer: params.proposerAddress,
+    signatureBase58: typeof signed.signature === 'string' ? signed.signature : '',
+  });
+  if ('error' in result) throw new Error(result.error);
+  return result.proposalHash;
+}
+
+/** Backend-proving approve. */
+export async function approveProposalViaBackend(params: {
+  contractAddress: string;
+  approverAddress: string;
+  proposal: Proposal;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const { approveViaBackend } = await import('./api');
+  const { getAuroSignFields } = await import('./auroWallet');
+  await assertLedgerReady(signer);
+  const progress = proxiedProgress(onProgress);
+  progress('Serializing proposal...');
+  const { proposalJson, proposalHash } = await getWorkerApi().serializeIndexedProposalForBackend({
+    proposal: params.proposal,
+    fallbackGuardAddress: params.contractAddress,
+  });
+  progress('Requesting Auro signature...');
+  const signed = await getAuroSignFields([proposalHash]);
+  if (!signed) throw new Error('User rejected or Auro signature failed');
+  progress('Submitting to backend prover...');
+  const result = await approveViaBackend({
+    proposal: proposalJson as never,
+    approver: params.approverAddress,
+    signatureBase58: typeof signed.signature === 'string' ? signed.signature : '',
+  });
+  if ('error' in result) throw new Error(result.error);
+  return result.txHash;
+}
+
+/**
+ * Backend-proving executeTransfer. Other execute* variants still go through
+ * the worker for now (follow-up to cover owner/threshold/delegate/child).
+ */
+export async function executeTransferViaBackendPath(params: {
+  contractAddress: string;
+  proposal: Proposal;
+}, onProgress?: OnProgress): Promise<string | null> {
+  const { executeTransferViaBackend } = await import('./api');
+  const progress = proxiedProgress(onProgress);
+  progress('Serializing proposal...');
+  const { proposalJson } = await getWorkerApi().serializeIndexedProposalForBackend({
+    proposal: params.proposal,
+    fallbackGuardAddress: params.contractAddress,
+  });
+  progress('Submitting to backend prover...');
+  const result = await executeTransferViaBackend({ proposal: proposalJson as never });
+  if ('error' in result) throw new Error(result.error);
+  return result.txHash;
+}
+
+/**
  * Rotates a guard's staking delegate using its committed delegation key.
  * The connected wallet must be that delegation key. Delegate = null/empty
  * means "undelegate to self." Ledger is not supported on this path —

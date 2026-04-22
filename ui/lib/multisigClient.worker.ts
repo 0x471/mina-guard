@@ -477,6 +477,38 @@ function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   return typeof json === 'string' ? json : JSON.stringify(json);
 }
 
+/**
+ * Flattens a TransactionProposal struct to the plain-JSON shape the backend
+ * expects (all Fields as decimal strings, PublicKeys as base58, receivers
+ * expanded as an array). The shape matches `BackendProposalInput` / the
+ * backend's `ProposalInput`.
+ */
+function serializeProposalForBackend(
+  proposal: InstanceType<typeof TransactionProposal>,
+): Record<string, unknown> {
+  const receivers: Array<{ address: string; amount: string }> = [];
+  for (let i = 0; i < MAX_RECEIVERS; i++) {
+    const r = proposal.receivers[i];
+    receivers.push({
+      address: r.address.toBase58(),
+      amount: r.amount.toString(),
+    });
+  }
+  return {
+    receivers,
+    tokenId: proposal.tokenId.toString(),
+    txType: proposal.txType.toString(),
+    data: proposal.data.toString(),
+    uid: proposal.uid.toString(),
+    configNonce: proposal.configNonce.toString(),
+    expiryBlock: proposal.expiryBlock.toString(),
+    networkId: proposal.networkId.toString(),
+    guardAddress: proposal.guardAddress.toBase58(),
+    destination: proposal.destination.toString(),
+    childAccount: proposal.childAccount.toBase58(),
+  };
+}
+
 /** mina-signer client for computing transaction commitments without o1js overhead. */
 const signerClient = new Client({
   network: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
@@ -1278,6 +1310,62 @@ const workerApi = {
    * Computes the createChild `data` field: Poseidon.hash([ownersCommitment, threshold, numOwners]).
    * Exposed so the wizard can compute it without dragging Poseidon into the main thread.
    */
+  /**
+   * Builds a TransactionProposal for a NEW proposal (create path) and
+   * returns the JSON-serialized struct + proposalHash. No MinaGuard.compile.
+   * Main thread can then collect Auro signature and POST to the backend.
+   */
+  buildNewProposalForBackend(params: {
+    contractAddress: string;
+    input: NewProposalInput;
+    configNonce: number;
+    networkId: string;
+  }): { proposalJson: Record<string, unknown>; proposalHash: string } {
+    const receivers = buildReceiversForProposal(params.input);
+    const txType = uiTxTypeToField(params.input.txType);
+    const data = buildProposalDataField(params.input);
+    const uid = Field.random();
+    const isRemote =
+      params.input.txType === 'createChild' ||
+      params.input.txType === 'reclaimChild' ||
+      params.input.txType === 'destroyChild' ||
+      params.input.txType === 'enableChildMultiSig';
+    const proposal = new TransactionProposal({
+      receivers,
+      tokenId: Field(0),
+      txType,
+      data,
+      uid,
+      configNonce: Field(params.configNonce),
+      expiryBlock: Field(params.input.expiryBlock ?? 0),
+      networkId: Field(params.networkId),
+      guardAddress: PublicKey.fromBase58(params.contractAddress),
+      destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
+      childAccount: params.input.childAccount
+        ? PublicKey.fromBase58(params.input.childAccount)
+        : PublicKey.empty(),
+    });
+    return {
+      proposalJson: serializeProposalForBackend(proposal),
+      proposalHash: proposal.hash().toString(),
+    };
+  },
+
+  /**
+   * Serializes an already-indexed proposal (approve / execute paths) to
+   * the backend JSON shape + returns its hash. No compile.
+   */
+  serializeIndexedProposalForBackend(params: {
+    proposal: Proposal;
+    fallbackGuardAddress: string;
+  }): { proposalJson: Record<string, unknown>; proposalHash: string } {
+    const proposal = buildProposalStruct(params.proposal, params.fallbackGuardAddress);
+    return {
+      proposalJson: serializeProposalForBackend(proposal),
+      proposalHash: proposal.hash().toString(),
+    };
+  },
+
   computeCreateChildConfigHash(params: {
     childOwners: string[];
     childThreshold: number;
