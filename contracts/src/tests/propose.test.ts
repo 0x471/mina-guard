@@ -33,7 +33,7 @@ describe('MinaGuard - Propose', () => {
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
@@ -266,14 +266,14 @@ describe('MinaGuard - Propose shape rules', () => {
     const proposal = buildProposal({ txType: TxType.ADD_OWNER });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('addOwner/removeOwner requires target pubkey in receivers[0]');
+    }).toThrow('governance proposal requires target pubkey in receivers[0]');
   });
 
   it('should reject REMOVE_OWNER with empty receivers[0]', async () => {
     const proposal = buildProposal({ txType: TxType.REMOVE_OWNER });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('addOwner/removeOwner requires target pubkey in receivers[0]');
+    }).toThrow('governance proposal requires target pubkey in receivers[0]');
   });
 
   // -- Rule 2: CHANGE_THRESHOLD requires empty slot 0 ------------------------
@@ -392,7 +392,7 @@ describe('MinaGuard - Propose shape rules', () => {
   it('should accept undelegate proposal with empty receivers[0]', async () => {
     const proposal = createUndelegateProposal(Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
   });
 
@@ -411,14 +411,14 @@ describe('MinaGuard - Propose shape rules', () => {
       ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
   });
 
   it('should accept CHANGE_THRESHOLD with non-zero data (the new threshold)', async () => {
     const proposal = createThresholdProposal(Field(2), Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
   });
 });
