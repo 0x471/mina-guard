@@ -25,6 +25,8 @@ import {
   EMPTY_MERKLE_MAP_ROOT,
   TxType,
   Destination,
+  DELEGATION_KEY_HASH_PREFIX,
+  RECIPIENT_ALLOWLIST_KEY_PREFIX,
 } from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption } from './list-commitment';
@@ -110,6 +112,9 @@ export class SetupEvent extends Struct({
   numOwners: Field,
   networkId: Field,
   parent: PublicKey,
+  delegationKeyHash: Field,
+  recipientAllowlistRoot: Field,
+  enforceRecipientAllowlist: Field,
 }) { }
 
 /** Emitted for each setup owner slot (fixed-size array). */
@@ -595,18 +600,35 @@ export class MinaGuard extends SmartContract {
     networkId: Field,
     parent: PublicKey,
     initialOwners: SetupOwnersInput,
+    delegationKey: PublicKey,
+    recipientAllowlistRoot: Field,
+    enforceRecipientAllowlist: Field,
   ): void {
     // Use requireEquals instead of getAndRequireEquals so deploy+setup can
     // be combined in a single transaction (no account cache read needed).
     this.ownersCommitment.requireEquals(Field(0));
     ownersCommitment.assertNotEquals(Field(0), 'Owners commitment must not be zero');
 
-    threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
+    threshold.assertGreaterThan(Field(1), 'Threshold must be > 1 (separation of duties)');
     numOwners.assertGreaterThanOrEqual(
       threshold,
       'Owners must be >= threshold'
     );
     numOwners.assertLessThanOrEqual(Field(MAX_OWNERS), 'Too many owners');
+
+    enforceRecipientAllowlist.equals(Field(0)).or(enforceRecipientAllowlist.equals(Field(1)))
+      .assertTrue('enforceRecipientAllowlist must be 0 or 1');
+
+    // Derive delegation-key commitment. Field(0) = disabled sentinel when
+    // caller passes PublicKey.empty(); otherwise a prefixed Poseidon hash.
+    // The sentinel is produced by Provable.if, not by a preimage of zero,
+    // so the "disabled" check in executeDelegateSingleKey cannot be spoofed.
+    const isDelegationDisabled = delegationKey.equals(PublicKey.empty());
+    const delegationKeyHash = Provable.if(
+      isDelegationDisabled,
+      Field(0),
+      Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, delegationKey.toFields()),
+    );
 
     this.ownersCommitment.set(ownersCommitment);
     this.setGovernanceState(threshold, numOwners);
@@ -616,8 +638,21 @@ export class MinaGuard extends SmartContract {
     this.parent.set(parent);
     this.childExecutionRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.childMultiSigEnabled.set(Field(1));
+    this.delegationKeyHash.set(delegationKeyHash);
+    this.delegationNonce.set(Field(0));
+    this.recipientAllowlistRoot.set(recipientAllowlistRoot);
+    this.enforceRecipientAllowlist.set(enforceRecipientAllowlist);
 
-    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, networkId, parent });
+    this.emitEvent('setup', {
+      ownersCommitment,
+      threshold,
+      numOwners,
+      networkId,
+      parent,
+      delegationKeyHash,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
+    });
 
     for (let i = 0; i < MAX_OWNERS; i++) {
       const index = Field(i);
@@ -642,7 +677,10 @@ export class MinaGuard extends SmartContract {
     threshold: Field,
     numOwners: Field,
     networkId: Field,
-    initialOwners: SetupOwnersInput
+    initialOwners: SetupOwnersInput,
+    delegationKey: PublicKey,
+    recipientAllowlistRoot: Field,
+    enforceRecipientAllowlist: Field,
   ) {
     this.initializeState(
       ownersCommitment,
@@ -651,6 +689,9 @@ export class MinaGuard extends SmartContract {
       networkId,
       PublicKey.empty(),
       initialOwners,
+      delegationKey,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
     );
   }
 
@@ -679,6 +720,9 @@ export class MinaGuard extends SmartContract {
     proposal: TransactionProposal,
     parentApprovalWitness: MerkleMapWitness,
     parentApprovalCount: Field,
+    delegationKey: PublicKey,
+    recipientAllowlistRoot: Field,
+    enforceRecipientAllowlist: Field,
   ) {
     const parentAddress = proposal.guardAddress;
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
@@ -688,7 +732,22 @@ export class MinaGuard extends SmartContract {
     proposal.destination.assertEquals(Destination.REMOTE, 'Not a remote execution proposal');
     proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
 
-    const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    // Bind the full child-config shape into proposal.data so the parent's
+    // CREATE_CHILD approval covers every field that shapes the child.
+    const isDelegationDisabled = delegationKey.equals(PublicKey.empty());
+    const delegationKeyHash = Provable.if(
+      isDelegationDisabled,
+      Field(0),
+      Poseidon.hashWithPrefix(DELEGATION_KEY_HASH_PREFIX, delegationKey.toFields()),
+    );
+    const childConfigHash = Poseidon.hash([
+      ownersCommitment,
+      threshold,
+      numOwners,
+      delegationKeyHash,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
+    ]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
     // this.parent isn't persisted yet, so call the shared helper directly
@@ -710,6 +769,9 @@ export class MinaGuard extends SmartContract {
       proposal.networkId,
       parentAddress,
       initialOwners,
+      delegationKey,
+      recipientAllowlistRoot,
+      enforceRecipientAllowlist,
     );
 
     this.emitEvent('execution', {
