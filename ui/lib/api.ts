@@ -130,6 +130,10 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     delegate: asNullableString(input.delegate),
     parent: asNullableString(input.parent),
     childMultiSigEnabled: asNullableBoolean(input.childMultiSigEnabled),
+    delegationKeyHash: asNullableString(input.delegationKeyHash),
+    delegationNonce: asNullableNumber(input.delegationNonce),
+    recipientAllowlistRoot: asNullableString(input.recipientAllowlistRoot),
+    enforceRecipientAllowlist: asNullableBoolean(input.enforceRecipientAllowlist),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };

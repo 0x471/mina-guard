@@ -16,7 +16,7 @@ import {
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { fetchBalance, fetchChildren, fetchProposal } from '@/lib/api';
-import { deployAndSetupChildOnchain } from '@/lib/multisigClient';
+import { deployAndSetupChildOnchain, executeSingleKeyDelegate } from '@/lib/multisigClient';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import {
@@ -213,6 +213,8 @@ export default function AccountPage() {
                 )}
               </div>
             </div>
+
+            <SingleKeyDelegateCard contract={multisig} />
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
@@ -600,6 +602,143 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Card + modal for the single-key delegation flow. Hidden when the guard
+ * has `delegationKeyHash` null or Field(0) (disabled). Calls the main-thread
+ * `executeSingleKeyDelegate` wrapper, which does a client-side pubkey-hash
+ * preflight (catches wrong-wallet-connected before the proving cycle) and
+ * rejects Ledger signers (cannot sign multi-field messages).
+ */
+function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
+  const { wallet, startOperation, isOperating } = useAppContext();
+  const [open, setOpen] = useState(false);
+  const [delegate, setDelegate] = useState('');
+  const [undelegate, setUndelegate] = useState(false);
+  const [expiryBlock, setExpiryBlock] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const enabled = !!contract.delegationKeyHash && contract.delegationKeyHash !== '0';
+  const ledgerBlocked = wallet.type === 'ledger';
+
+  if (!enabled) return null;
+
+  const handleSubmit = async () => {
+    setLocalError(null);
+    if (!wallet.address) { setLocalError('Connect a wallet first.'); return; }
+    if (!wallet.type) { setLocalError('Wallet adapter not ready.'); return; }
+    if (ledgerBlocked) {
+      setLocalError('Ledger cannot sign multi-field messages. Use Auro or the dev-helpers CLI.');
+      return;
+    }
+    const target = undelegate ? null : delegate.trim();
+    if (!undelegate) {
+      if (!target || !target.startsWith('B62') || target.length < 50) {
+        setLocalError('Enter a valid B62… delegate address or toggle undelegate.');
+        return;
+      }
+    }
+    const expiry = expiryBlock.trim();
+    if (expiry && !/^\d+$/.test(expiry)) {
+      setLocalError('Expiry block must be a non-negative integer (0 = no expiry).');
+      return;
+    }
+
+    const signer = wallet.type
+      ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex }
+      : undefined;
+    void startOperation('Requesting delegation signature…', async (onProgress) => {
+      return await executeSingleKeyDelegate({
+        guardAddress: contract.address,
+        delegationKeyPub: wallet.address!,
+        delegate: target ?? null,
+        expiryBlock: expiry || null,
+        feePayerAddress: wallet.address!,
+      }, onProgress, signer);
+    });
+    setOpen(false);
+    setDelegate('');
+    setUndelegate(false);
+    setExpiryBlock('');
+  };
+
+  return (
+    <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-xs text-safe-text uppercase tracking-wider">Single-Key Delegate</p>
+          <p className="text-xs text-safe-text opacity-70 mt-1">
+            Rotate the staking delegate with a single signature — the connected wallet must
+            hash to <code className="font-mono">delegationKeyHash</code>.
+          </p>
+        </div>
+        <button
+          disabled={isOperating || ledgerBlocked}
+          onClick={() => setOpen(true)}
+          title={ledgerBlocked ? 'Ledger cannot sign multi-field messages' : undefined}
+          className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-xs hover:brightness-110 transition-all disabled:opacity-60"
+        >
+          Change delegate
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-4 border-t border-safe-border pt-4 space-y-3">
+          <label className="space-y-1 block">
+            <span className="text-xs text-safe-text">Block producer address</span>
+            <input
+              type="text"
+              disabled={undelegate}
+              value={delegate}
+              onChange={(e) => { setDelegate(e.target.value); setLocalError(null); }}
+              placeholder="B62… (recipient of the delegation)"
+              className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green disabled:opacity-40"
+            />
+          </label>
+
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={undelegate} onChange={(e) => setUndelegate(e.target.checked)} />
+            <span className="text-sm">Undelegate (point stake to self)</span>
+          </label>
+
+          <label className="space-y-1 block">
+            <span className="text-xs text-safe-text">Expiry block (optional — 0 = no expiry)</span>
+            <input
+              type="text"
+              value={expiryBlock}
+              onChange={(e) => { setExpiryBlock(e.target.value); setLocalError(null); }}
+              placeholder="0"
+              className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green"
+            />
+          </label>
+
+          <p className="text-xs text-safe-text opacity-70">
+            Changes take effect in ~2–4 weeks (epoch transition). This is a zero-value
+            transaction and does not move funds.
+          </p>
+
+          {localError && <p className="text-sm text-red-400">{localError}</p>}
+
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={() => { setOpen(false); setLocalError(null); }}
+              className="border border-safe-border rounded-lg px-4 py-2 text-sm text-safe-text hover:bg-safe-hover transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={isOperating}
+              className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
+            >
+              {isOperating ? 'Signing…' : 'Submit'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -72,6 +72,10 @@ export interface ContractSummary {
   delegate: string | null;
   parent: string | null;
   childMultiSigEnabled: boolean | null;
+  delegationKeyHash: string | null;
+  delegationNonce: number | null;
+  recipientAllowlistRoot: string | null;
+  enforceRecipientAllowlist: boolean | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }
