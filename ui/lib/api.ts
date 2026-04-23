@@ -101,6 +101,7 @@ export async function proposeViaBackend(params: {
   proposal: BackendProposalInput;
   proposer: string;
   signatureBase58: string;
+  memo?: string;
 }): Promise<{ txHash: string; proposalHash: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/propose`, {

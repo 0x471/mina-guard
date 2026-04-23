@@ -204,6 +204,7 @@ export async function createProposalViaBackend(params: {
     proposal: proposalJson as never,
     proposer: params.proposerAddress,
     signatureBase58: typeof signed.signature === 'string' ? signed.signature : '',
+    memo: params.input.memo,
   });
   if ('error' in result) throw new Error(result.error);
   return result.proposalHash;
