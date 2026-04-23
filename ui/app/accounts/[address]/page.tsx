@@ -220,6 +220,23 @@ export default function AccountPage() {
 
             <SingleKeyDelegateCard contract={multisig} />
 
+            <Link
+              href={`/delegation/${multisig.address}`}
+              className="block bg-safe-gray border border-safe-border rounded-xl p-5 hover:border-safe-green transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
+                    Delegation Dashboard
+                  </p>
+                  <p className="text-sm opacity-80">
+                    View and manage staking delegation across this guard and its child accounts.
+                  </p>
+                </div>
+                <span className="text-safe-green text-sm">→</span>
+              </div>
+            </Link>
+
             <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs text-safe-text uppercase tracking-wider">Recent Proposals</p>
