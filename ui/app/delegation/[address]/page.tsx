@@ -161,18 +161,7 @@ export default function DelegationPage() {
       </div>
 
       {multisig && !multisig.parent && (
-        <div className="border-t border-safe-border pt-6 mt-6">
-          <Link
-            href={`/accounts/new?parent=${multisig.address}`}
-            className="inline-flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110"
-          >
-            ➕ Create Block Producer Child
-          </Link>
-          <p className="text-xs opacity-60 mt-2">
-            Deploys a new child guard delegating to a new block producer. Runs through
-            the CREATE_CHILD multisig proposal flow.
-          </p>
-        </div>
+        <CreateBPChildCta parentAddress={multisig.address} />
       )}
       </div>
     </div>
@@ -417,6 +406,96 @@ function DelegationRow({
             >
               {isOperating ? 'Signing…' : 'Submit'}
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateBPChildCta({ parentAddress }: { parentAddress: string }) {
+  const [open, setOpen] = useState(false);
+  const [bp, setBp] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const bpTrimmed = bp.trim();
+  const bpValid =
+    bpTrimmed === '' ||
+    (bpTrimmed.startsWith('B62') && bpTrimmed.length >= 50);
+  const href = `/accounts/new?parent=${parentAddress}${
+    bpTrimmed ? `&initialDelegate=${encodeURIComponent(bpTrimmed)}` : ''
+  }`;
+
+  return (
+    <div className="border-t border-safe-border pt-6 mt-6">
+      {!open ? (
+        <>
+          <button
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110"
+          >
+            ➕ Create Block Producer Child
+          </button>
+          <p className="text-xs opacity-60 mt-2">
+            Deploys a new child guard delegating to a new block producer. Runs
+            through the CREATE_CHILD multisig proposal flow.
+          </p>
+        </>
+      ) : (
+        <div className="space-y-3 bg-safe-gray border border-safe-border rounded-xl p-5">
+          <p className="text-sm font-semibold">Create Block Producer Child</p>
+          <p className="text-xs opacity-70">
+            The child guard will be deployed with its initial staking delegate
+            set to the address below. You can leave this blank and configure
+            it in the next step instead.
+          </p>
+          <label className="space-y-1 block">
+            <span className="text-xs opacity-80">
+              Block producer address (optional)
+            </span>
+            <input
+              type="text"
+              value={bp}
+              onChange={(e) => {
+                setBp(e.target.value);
+                setError(null);
+              }}
+              placeholder="B62…"
+              className="w-full bg-safe-dark border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green"
+            />
+          </label>
+          {!bpValid && (
+            <p className="text-xs text-red-400">
+              Address must start with B62 and be at least 50 characters.
+            </p>
+          )}
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={() => {
+                setOpen(false);
+                setBp('');
+                setError(null);
+              }}
+              className="border border-safe-border rounded-lg px-3 py-1.5 text-xs opacity-80 hover:bg-safe-hover"
+            >
+              Cancel
+            </button>
+            {bpValid ? (
+              <Link
+                href={href}
+                className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-1.5 text-xs hover:brightness-110"
+              >
+                Continue to deploy wizard →
+              </Link>
+            ) : (
+              <button
+                disabled
+                className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-1.5 text-xs opacity-50"
+              >
+                Continue to deploy wizard →
+              </button>
+            )}
           </div>
         </div>
       )}
