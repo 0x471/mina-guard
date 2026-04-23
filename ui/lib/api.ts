@@ -11,6 +11,25 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
 
+/**
+ * Returns the Authorization header for backend calls when a NextAuth
+ * session is active. Short-circuits in local dev (AUTH_DISABLED) and
+ * when there is no session (public surface). The backend middleware
+ * enforces authentication independently; this is just courtesy injection.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  if (process.env.NEXT_PUBLIC_AUTH_DISABLED === 'true') return {};
+  if (typeof window === 'undefined') return {};
+  try {
+    const mod = await import('next-auth/react');
+    const session = await mod.getSession();
+    const token = (session as unknown as { backendToken?: string })?.backendToken;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Fetches indexer status from backend monitoring endpoint. */
 export async function fetchIndexerStatus(): Promise<IndexerStatus | null> {
   return getJson<IndexerStatus>('/api/indexer/status');
@@ -60,7 +79,7 @@ export async function deployAndSetupViaBackend(params: {
   try {
     const response = await fetch(`${API_BASE}/api/tx/deploy-and-setup`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...(await authHeaders()), 'content-type': 'application/json' },
       body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
@@ -105,7 +124,7 @@ export async function proposeViaBackend(params: {
 }): Promise<{ txHash: string; proposalHash: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/propose`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+      method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
@@ -123,7 +142,7 @@ export async function approveViaBackend(params: {
 }): Promise<{ txHash: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/approve`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+      method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
@@ -139,7 +158,7 @@ export async function executeTransferViaBackend(params: {
 }): Promise<{ txHash: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/execute-transfer`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+      method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
@@ -162,7 +181,7 @@ export async function executeViaBackend(params: {
 }): Promise<{ txHash: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/execute`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
+      method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
@@ -187,7 +206,7 @@ export async function delegateSingleKeyViaBackend(params: {
   try {
     const response = await fetch(`${API_BASE}/api/tx/delegate-single-key`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...(await authHeaders()), 'content-type': 'application/json' },
       body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
@@ -270,7 +289,7 @@ export async function createRecipientAlias(
       `${API_BASE}/api/contracts/${contractAddress}/recipient-aliases`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { ...(await authHeaders()), 'content-type': 'application/json' },
         body: JSON.stringify(params),
       },
     );
@@ -301,7 +320,7 @@ export async function deleteRecipientAlias(
   try {
     const res = await fetch(
       `${API_BASE}/api/contracts/${contractAddress}/recipient-aliases/${aliasId}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: await authHeaders() },
     );
     const body = await res.json().catch(() => ({ error: 'invalid JSON' }));
     if (!res.ok) {
@@ -394,7 +413,11 @@ export async function fetchBalance(address: string): Promise<string | null> {
 /** Generic JSON fetch helper with null-on-error semantics for resilient polling. */
 async function getJson<T>(path: string): Promise<T | null> {
   try {
-    const response = await fetch(`${API_BASE}${path}`, { cache: 'no-store' });
+    const headers = await authHeaders();
+    const response = await fetch(`${API_BASE}${path}`, {
+      cache: 'no-store',
+      headers,
+    });
     if (!response.ok) {
       console.error(`[api] getJson(${path}) returned ${response.status}:`, await response.text());
       return null;
@@ -542,7 +565,7 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
   while (true) {
     const response = await fetch(
       `${API_BASE}/api/contracts/${contractAddress}/events?limit=${limit}&offset=${offset}`,
-      { cache: 'no-store' }
+      { cache: 'no-store', headers: await authHeaders() }
     );
 
     if (!response.ok) {
