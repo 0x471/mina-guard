@@ -15,6 +15,7 @@ import {
   executeChildLifecycleOnchain,
   assertLedgerReady,
 } from '@/lib/multisigClient';
+import { useAutoExecuteOnThreshold } from '@/lib/useAutoExecuteOnThreshold';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -79,6 +80,18 @@ export default function TransactionDetailPage() {
     proposal.configNonce !== String(multisig.configNonce);
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
+
+  // Auto-execute: once the indexed approvalCount crosses the threshold,
+  // any open tab on this proposal fires the corresponding execute* method.
+  // Disabled when the config is stale (execute would revert anyway).
+  const { autoExecuting, autoError } = useAutoExecuteOnThreshold({
+    proposal: proposal ?? null,
+    contractAddress: multisig?.address ?? null,
+    threshold: multisig?.threshold ?? null,
+    approvalAddresses,
+    childAddress: proposal?.childAccount ?? undefined,
+    enabled: canExecute && !isOperating,
+  });
 
   /** Submits an on-chain approveProposal transaction. */
   const handleApprove = async () => {
@@ -205,6 +218,21 @@ export default function TransactionDetailPage() {
               at {multisig?.configNonce}. It can no longer be executed — governance changed since this
               proposal was made. Create a new proposal to proceed.
             </p>
+          </div>
+        )}
+
+        {autoExecuting && (
+          <div className="rounded-xl border border-safe-green/30 bg-safe-green/10 p-4 text-safe-green text-sm">
+            <p className="font-semibold">Auto-executing proposal…</p>
+            <p className="opacity-90">
+              Threshold reached — submitting the execute transaction via backend prover.
+            </p>
+          </div>
+        )}
+        {autoError && (
+          <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-amber-300 text-sm">
+            <p className="font-semibold">Auto-execute failed</p>
+            <p className="opacity-90">{autoError} — use the Execute button below to retry.</p>
           </div>
         )}
 
