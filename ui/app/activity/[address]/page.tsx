@@ -17,6 +17,7 @@ import {
   type Proposal,
 } from '@/lib/types';
 import AccountTabs from '@/components/AccountTabs';
+import { fetchIndexerStatus } from '@/lib/api';
 
 type Filter =
   | 'all'
@@ -31,6 +32,7 @@ type Row =
       kind: 'proposal';
       proposal: Proposal;
       needsMySig: boolean;
+      isExpired: boolean;
       timestamp: number;
     }
   | {
@@ -49,6 +51,16 @@ export default function ActivityPage() {
   const [incoming, setIncoming] = useState<IncomingTransferRecord[]>([]);
   const [approvalMap, setApprovalMap] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
+  const [chainHeight, setChainHeight] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchIndexerStatus().then((s) => {
+      if (!cancelled) setChainHeight(s?.latestChainHeight ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!urlAddress) return;
@@ -115,10 +127,17 @@ export default function ActivityPage() {
         : false;
       const needsMySig =
         p.status === 'pending' && isOwner && !alreadyApproved;
+      const expiry = Number(p.expiryBlock ?? '0');
+      const isExpired =
+        p.status === 'pending' &&
+        expiry > 0 &&
+        chainHeight !== null &&
+        chainHeight >= expiry;
       return {
         kind: 'proposal',
         proposal: p,
         needsMySig,
+        isExpired,
         timestamp: Date.parse(p.createdAt) || 0,
       };
     });
@@ -130,7 +149,7 @@ export default function ActivityPage() {
     return [...proposalRows, ...incomingRows].sort(
       (a, b) => b.timestamp - a.timestamp,
     );
-  }, [proposals, incoming, approvalMap, wallet.address, isOwner]);
+  }, [proposals, incoming, approvalMap, wallet.address, isOwner, chainHeight]);
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -317,7 +336,12 @@ function ActivityRow({ row }: { row: Row }) {
             {label}
           </span>
           <span className={`text-xs ${statusColor}`}>{p.status}</span>
-          {row.needsMySig && (
+          {row.isExpired && (
+            <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-400/30 rounded px-1.5 py-0.5 font-semibold">
+              Expired
+            </span>
+          )}
+          {row.needsMySig && !row.isExpired && (
             <span className="text-[10px] bg-amber-400/20 text-amber-300 border border-amber-400/30 rounded px-1.5 py-0.5">
               Needs your signature
             </span>
