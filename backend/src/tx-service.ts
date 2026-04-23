@@ -704,6 +704,7 @@ export interface ProposeBackendInput {
   proposal: ProposalInput;
   proposer: string;
   signatureBase58: string;
+  memo?: string;
 }
 
 export async function proposeBackend(
@@ -727,7 +728,11 @@ export async function proposeBackend(
   const zkApp = new MinaGuard(guardAddress);
 
   const tx = await Mina.transaction(
-    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    {
+      sender: feePayer.pub,
+      fee: UInt64.from(100_000_000),
+      memo: input.memo ?? '',
+    },
     async () => {
       await zkApp.propose(
         proposal,

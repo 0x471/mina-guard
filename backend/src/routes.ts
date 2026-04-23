@@ -262,9 +262,19 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
    */
   router.post('/api/tx/propose', safe(async (req, res) => {
     if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
-    const body = (req.body ?? {}) as { proposal?: unknown; proposer?: unknown; signatureBase58?: unknown };
+    const body = (req.body ?? {}) as {
+      proposal?: unknown;
+      proposer?: unknown;
+      signatureBase58?: unknown;
+      memo?: unknown;
+    };
     if (!body.proposal || typeof body.proposer !== 'string' || typeof body.signatureBase58 !== 'string') {
       res.status(400).json({ error: 'proposal, proposer, signatureBase58 required' });
+      return;
+    }
+    const memo = typeof body.memo === 'string' ? body.memo : undefined;
+    if (memo && new TextEncoder().encode(memo).length > 32) {
+      res.status(400).json({ error: 'memo must be ≤ 32 utf-8 bytes' });
       return;
     }
     const { proposeBackend } = await import('./tx-service.js');
@@ -273,6 +283,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         proposal: body.proposal as never,
         proposer: body.proposer,
         signatureBase58: body.signatureBase58,
+        memo,
       });
       res.json(result);
     } catch (err) {
