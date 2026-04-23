@@ -199,6 +199,40 @@ export async function delegateSingleKeyViaBackend(params: {
   }
 }
 
+/** Indexed inbound transfer record populated by the IncomingPoller. */
+export interface IncomingTransferRecord {
+  id: number;
+  fromAddress: string;
+  amount: string;
+  memo: string | null;
+  blockHeight: number;
+  txHash: string;
+  createdAt: string;
+}
+
+/** Fetches inbound transfers for a contract, most-recent first. */
+export async function fetchIncomingTransfers(
+  address: string,
+  options?: { limit?: number },
+): Promise<IncomingTransferRecord[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set('limit', String(options.limit));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const data = await getJson<Array<Record<string, unknown>>>(
+    `/api/contracts/${address}/incoming${qs}`,
+  );
+  if (!data) return [];
+  return data.map((item) => ({
+    id: asNumber(item.id),
+    fromAddress: asString(item.fromAddress) ?? '',
+    amount: asString(item.amount) ?? '0',
+    memo: asNullableString(item.memo),
+    blockHeight: asNumber(item.blockHeight),
+    txHash: asString(item.txHash) ?? '',
+    createdAt: asString(item.createdAt) ?? '',
+  }));
+}
+
 /** Lists active recipient-allowlist entries (addresses currently allowed). */
 export async function fetchRecipientAllowlist(address: string): Promise<string[]> {
   const data = await getJson<Array<Record<string, unknown>>>(
