@@ -82,6 +82,49 @@ export class IncomingPoller {
           });
         }
 
+        // zkappCommands also encode payments in modern o1js: e.g.
+        // AccountUpdate.createSigned(sender).send({ to, amount }) lands as a
+        // zkappCommand whose accountUpdates include a positive balanceChange
+        // on `to`. We sum all positive balanceChanges per tracked address.
+        for (const zk of block.transactions.zkappCommands ?? []) {
+          if (zk.failureReason?.failures?.length) continue;
+          const aus = zk.zkappCommand?.accountUpdates ?? [];
+          const perContract = new Map<number, bigint>();
+          for (const au of aus) {
+            const pk = au.body?.publicKey;
+            if (!pk) continue;
+            const contractId = addressToId.get(pk);
+            if (contractId === undefined) continue;
+            const bc = au.body?.balanceChange;
+            if (!bc) continue;
+            const magnitude = BigInt(bc.magnitude ?? '0');
+            if (magnitude === 0n) continue;
+            const positive = (bc.sgn ?? 'Positive') === 'Positive';
+            if (!positive) continue;
+            perContract.set(
+              contractId,
+              (perContract.get(contractId) ?? 0n) + magnitude,
+            );
+          }
+          if (perContract.size === 0) continue;
+          const fromAddress =
+            zk.zkappCommand?.feePayer?.body?.publicKey ?? 'unknown';
+          for (const [contractId, total] of perContract) {
+            await prisma.incomingTransfer.upsert({
+              where: { contractId_txHash: { contractId, txHash: zk.hash } },
+              create: {
+                contractId,
+                fromAddress,
+                amount: total.toString(),
+                memo: zk.zkappCommand?.memo ?? null,
+                blockHeight: height,
+                txHash: zk.hash,
+              },
+              update: {},
+            });
+          }
+        }
+
         if (height > newCursor) newCursor = height;
       }
 
@@ -128,6 +171,20 @@ export class IncomingPoller {
             source { publicKey }
             receiver { publicKey }
           }
+          zkappCommands {
+            hash
+            failureReason { failures }
+            zkappCommand {
+              memo
+              feePayer { body { publicKey } }
+              accountUpdates {
+                body {
+                  publicKey
+                  balanceChange { magnitude sgn }
+                }
+              }
+            }
+          }
         }
       }
     }`;
@@ -152,7 +209,10 @@ export class IncomingPoller {
 
 interface BestChainBlock {
   protocolState: { consensusState: { blockHeight: string } };
-  transactions: { userCommands?: UserCommand[] };
+  transactions: {
+    userCommands?: UserCommand[];
+    zkappCommands?: ZkappCommand[];
+  };
 }
 
 interface UserCommand {
@@ -162,4 +222,19 @@ interface UserCommand {
   memo?: string | null;
   source?: { publicKey?: string };
   receiver?: { publicKey?: string };
+}
+
+interface ZkappCommand {
+  hash: string;
+  failureReason?: { failures?: unknown[] } | null;
+  zkappCommand?: {
+    memo?: string | null;
+    feePayer?: { body?: { publicKey?: string } };
+    accountUpdates?: Array<{
+      body?: {
+        publicKey?: string;
+        balanceChange?: { magnitude?: string; sgn?: string };
+      };
+    }>;
+  };
 }
