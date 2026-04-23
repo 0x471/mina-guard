@@ -9,6 +9,7 @@ import {
 import { runVkHashCompile } from './commands/vk-hash-compile.ts';
 import { runFundAccounts } from './commands/fund-accounts.ts';
 import { runDelegateSingleKey } from './commands/delegate-single-key.ts';
+import { runSendPayment } from './commands/send-payment.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -106,6 +107,18 @@ async function main(): Promise<void> {
     .action(async () => {
       await runDelegateSingleKey();
     });
+
+  program
+    .command('send-payment')
+    .description('Send a test payment from an acquired lightnet funder to any recipient.')
+    .requiredOption('--to <address>', 'Recipient B62… address')
+    .requiredOption('--amount <mina>', 'Amount in MINA (decimal, e.g. 10)')
+    .option('--memo <memo>', 'Optional memo (max 32 chars)')
+    .action(
+      async (opts: { to: string; amount: string; memo?: string }) => {
+        await runSendPayment(opts);
+      },
+    );
 
   await program.parseAsync(process.argv);
 }
