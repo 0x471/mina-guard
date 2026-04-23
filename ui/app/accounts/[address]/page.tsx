@@ -23,6 +23,7 @@ import { Field, PublicKey, Poseidon, UInt32 } from 'o1js';
 import { DELEGATION_KEY_HASH_PREFIX } from 'contracts';
 import ConnectNotice from '@/components/ConnectNotice';
 import AccountTabs from '@/components/AccountTabs';
+import RecipientAliasManager from '@/components/RecipientAliasManager';
 import Link from 'next/link';
 import {
   clearPendingSubaccount,
@@ -221,6 +222,11 @@ export default function AccountPage() {
             </div>
 
             <SingleKeyDelegateCard contract={multisig} />
+
+            <RecipientAliasManager
+              contractAddress={multisig.address}
+              walletAddress={wallet.address}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Link
