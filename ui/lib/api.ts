@@ -375,6 +375,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     receivers,
     recipientCount: asNullableNumber(input.recipientCount) ?? receivers.length,
     totalAmount,
+    memo: asNullableString(input.memo),
   };
 }
 

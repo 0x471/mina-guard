@@ -52,6 +52,7 @@ export interface Proposal {
   receivers: ProposalReceiver[];
   recipientCount: number;
   totalAmount: string | null;
+  memo: string | null;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
