@@ -220,22 +220,38 @@ export default function AccountPage() {
 
             <SingleKeyDelegateCard contract={multisig} />
 
-            <Link
-              href={`/delegation/${multisig.address}`}
-              className="block bg-safe-gray border border-safe-border rounded-xl p-5 hover:border-safe-green transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
-                    Delegation Dashboard
-                  </p>
-                  <p className="text-sm opacity-80">
-                    View and manage staking delegation across this guard and its child accounts.
-                  </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Link
+                href={`/delegation/${multisig.address}`}
+                className="bg-safe-gray border border-safe-border rounded-xl p-5 hover:border-safe-green transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
+                      Delegation
+                    </p>
+                    <p className="text-sm opacity-80">BP staking dashboard.</p>
+                  </div>
+                  <span className="text-safe-green text-sm">→</span>
                 </div>
-                <span className="text-safe-green text-sm">→</span>
-              </div>
-            </Link>
+              </Link>
+              <Link
+                href={`/activity/${multisig.address}`}
+                className="bg-safe-gray border border-safe-border rounded-xl p-5 hover:border-safe-green transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
+                      Activity
+                    </p>
+                    <p className="text-sm opacity-80">
+                      Inbound + outbound + pending approvals.
+                    </p>
+                  </div>
+                  <span className="text-safe-green text-sm">→</span>
+                </div>
+              </Link>
+            </div>
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
