@@ -30,6 +30,8 @@ export default function ProposalForm({
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
   const [recipientAddress, setRecipientAddress] = useState('');
+  const [memo, setMemo] = useState('');
+  const memoByteLength = new TextEncoder().encode(memo).length;
   const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
   useEffect(() => {
     setNewThreshold(Math.max(1, currentThreshold));
@@ -143,6 +145,10 @@ export default function ProposalForm({
       setValidationError('Enter a valid B62… recipient address.');
       return;
     }
+    if (memoByteLength > 32) {
+      setValidationError(`Memo must be ≤ 32 bytes (currently ${memoByteLength}).`);
+      return;
+    }
 
     onSubmit({
       txType,
@@ -168,6 +174,7 @@ export default function ProposalForm({
       childMultiSigEnable:
         txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
+      memo: memo.trim() || undefined,
     });
   };
 
@@ -492,6 +499,25 @@ export default function ProposalForm({
         placeholder="0"
         inputMode="numeric"
       />
+
+      <div className="space-y-1">
+        <label className="block text-sm text-safe-text">
+          Memo <span className="opacity-60">(optional, included on the propose tx)</span>
+        </label>
+        <input
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          placeholder="e.g. bi-weekly rebalance to kraken"
+          className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm placeholder:text-safe-border focus:outline-none focus:border-safe-green"
+        />
+        <div className="flex justify-between text-xs text-safe-text opacity-70">
+          <span>Surfaces on the proposal detail + Activity feed.</span>
+          <span className={memoByteLength > 32 ? 'text-red-400' : ''}>
+            {memoByteLength}/32 bytes
+          </span>
+        </div>
+      </div>
 
       {validationError && <p className="text-sm text-red-400">{validationError}</p>}
 

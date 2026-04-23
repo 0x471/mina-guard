@@ -134,6 +134,8 @@ export interface NewProposalInput {
   createChildConfigHash?: string;
   /** Recipient address for addRecipient / removeRecipient. */
   recipientAddress?: string;
+  /** Optional memo (max 32 UTF-8 bytes) to attach to the propose tx. */
+  memo?: string;
 }
 
 export const TX_TYPE_LABELS: Record<TxType, string> = {
