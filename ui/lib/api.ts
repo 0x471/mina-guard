@@ -234,6 +234,88 @@ export async function fetchIncomingTransfers(
   }));
 }
 
+/** A UI-layer alias for a recipient address (e.g. "Kraken" → B62…). */
+export interface RecipientAliasRecord {
+  id: number;
+  alias: string;
+  address: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** Fetches all recipient aliases for a contract, alphabetical. */
+export async function fetchRecipientAliases(
+  address: string,
+): Promise<RecipientAliasRecord[]> {
+  const data = await getJson<Array<Record<string, unknown>>>(
+    `/api/contracts/${address}/recipient-aliases`,
+  );
+  if (!data) return [];
+  return data.map((item) => ({
+    id: asNumber(item.id),
+    alias: asString(item.alias) ?? '',
+    address: asString(item.address) ?? '',
+    createdBy: asNullableString(item.createdBy),
+    createdAt: asString(item.createdAt) ?? '',
+  }));
+}
+
+/** Creates or upserts a recipient alias. Returns the row. */
+export async function createRecipientAlias(
+  contractAddress: string,
+  params: { alias: string; address: string; createdBy?: string | null },
+): Promise<RecipientAliasRecord | { error: string }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/recipient-aliases`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(params),
+      },
+    );
+    const body = await res.json().catch(() => ({ error: 'invalid JSON' }));
+    if (!res.ok) {
+      return {
+        error:
+          typeof body.error === 'string' ? body.error : `HTTP ${res.status}`,
+      };
+    }
+    return {
+      id: asNumber(body.id),
+      alias: asString(body.alias) ?? '',
+      address: asString(body.address) ?? '',
+      createdBy: asNullableString(body.createdBy),
+      createdAt: asString(body.createdAt) ?? '',
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Deletes a recipient alias by id. */
+export async function deleteRecipientAlias(
+  contractAddress: string,
+  aliasId: number,
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/recipient-aliases/${aliasId}`,
+      { method: 'DELETE' },
+    );
+    const body = await res.json().catch(() => ({ error: 'invalid JSON' }));
+    if (!res.ok) {
+      return {
+        error:
+          typeof body.error === 'string' ? body.error : `HTTP ${res.status}`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Lists active recipient-allowlist entries (addresses currently allowed). */
 export async function fetchRecipientAllowlist(address: string): Promise<string[]> {
   const data = await getJson<Array<Record<string, unknown>>>(
