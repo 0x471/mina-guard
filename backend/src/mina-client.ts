@@ -23,6 +23,67 @@ export function configureNetwork(config: BackendConfig): void {
   );
 }
 
+/**
+ * Fetches the raw base58-encoded memo of a specific tx by hash, bounded to
+ * a window of recent best-chain blocks. Returns null if the tx isn't found
+ * in the window (too old / reorged out / invalid hash).
+ *
+ * Used by the indexer to enrich proposal rows with the memo from the tx
+ * that emitted the propose event — events don't carry the memo directly.
+ */
+export async function fetchTxMemoByHash(
+  minaEndpoint: string,
+  txHash: string,
+  windowBlocks = 20,
+): Promise<string | null> {
+  const query = `{
+    bestChain(maxLength: ${windowBlocks}) {
+      transactions {
+        zkappCommands {
+          hash
+          zkappCommand { memo }
+        }
+        userCommands {
+          hash
+          memo
+        }
+      }
+    }
+  }`;
+  try {
+    const res = await fetch(minaEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      data?: {
+        bestChain?: Array<{
+          transactions: {
+            zkappCommands?: Array<{
+              hash: string;
+              zkappCommand?: { memo?: string | null };
+            }>;
+            userCommands?: Array<{ hash: string; memo?: string | null }>;
+          };
+        }>;
+      };
+    };
+    for (const block of body.data?.bestChain ?? []) {
+      for (const zk of block.transactions.zkappCommands ?? []) {
+        if (zk.hash === txHash) return zk.zkappCommand?.memo ?? null;
+      }
+      for (const uc of block.transactions.userCommands ?? []) {
+        if (uc.hash === txHash) return uc.memo ?? null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Fetches latest block height from archive node to stay aligned with event availability. */
 export async function fetchLatestBlockHeight(config: BackendConfig): Promise<number> {
   const query = `{

@@ -7,9 +7,11 @@ import {
   fetchDecodedContractEvents,
   fetchLatestBlockHeight,
   fetchOnChainState,
+  fetchTxMemoByHash,
   fetchVerificationKeyHash,
   type ChainEvent,
 } from './mina-client.js';
+import { decodeMinaMemo } from './memo-decode.js';
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
 
@@ -413,6 +415,39 @@ export class MinaGuardIndexer {
         childAccount: asNullableAddress(asString(event.childAccount)),
       },
     });
+
+    // Enrich with tx memo. The propose event doesn't carry the operator's
+    // memo — we have to fetch the zkappCommand from the daemon and decode
+    // its base58 memo field. Skipped silently on any failure (memo is
+    // display-only, not security-critical).
+    if (chainEvent.txHash) {
+      await this.enrichProposalMemo(contractId, proposalHash, chainEvent.txHash);
+    }
+  }
+
+  /** Backfills `Proposal.memo` from the propose tx's on-chain memo field. */
+  private async enrichProposalMemo(
+    contractId: number,
+    proposalHash: string,
+    txHash: string,
+  ): Promise<void> {
+    try {
+      const existing = await prisma.proposal.findUnique({
+        where: { contractId_proposalHash: { contractId, proposalHash } },
+        select: { memo: true },
+      });
+      if (existing?.memo) return;
+      const rawMemo = await fetchTxMemoByHash(this.config.minaEndpoint, txHash);
+      if (!rawMemo) return;
+      const decoded = decodeMinaMemo(rawMemo) ?? rawMemo;
+      if (!decoded) return;
+      await prisma.proposal.update({
+        where: { contractId_proposalHash: { contractId, proposalHash } },
+        data: { memo: decoded },
+      });
+    } catch {
+      // Memo enrichment is best-effort.
+    }
   }
 
   /**
