@@ -17,6 +17,7 @@ import {
   formatMina,
   type ContractSummary,
 } from '@/lib/types';
+import AccountTabs from '@/components/AccountTabs';
 
 type Row = {
   contract: ContractSummary;
@@ -98,14 +99,10 @@ export default function DelegationPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-4xl mx-auto px-6 py-8">
+      <AccountTabs address={urlAddress} active="delegation" />
+      <div className="space-y-6">
       <header className="space-y-2">
-        <Link
-          href={`/accounts/${urlAddress}`}
-          className="text-xs opacity-70 hover:underline"
-        >
-          ← Back to account
-        </Link>
         <h1 className="text-2xl font-bold">Delegation</h1>
         <p className="text-sm opacity-70">
           Block producer staking delegation across this guard and its child accounts.
@@ -177,6 +174,7 @@ export default function DelegationPage() {
           </p>
         </div>
       )}
+      </div>
     </div>
   );
 }

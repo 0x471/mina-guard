@@ -16,6 +16,7 @@ import {
   TX_TYPE_LABELS,
   type Proposal,
 } from '@/lib/types';
+import AccountTabs from '@/components/AccountTabs';
 
 type Filter =
   | 'all'
@@ -168,14 +169,10 @@ export default function ActivityPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-4xl mx-auto px-6 py-8">
+      <AccountTabs address={urlAddress} active="activity" />
+      <div className="space-y-6">
       <header className="space-y-2">
-        <Link
-          href={`/accounts/${urlAddress}`}
-          className="text-xs opacity-70 hover:underline"
-        >
-          ← Back to account
-        </Link>
         <h1 className="text-2xl font-bold">Activity</h1>
         <p className="text-sm opacity-70 font-mono truncate" title={urlAddress}>
           {truncateAddress(urlAddress, 12)}
@@ -232,6 +229,7 @@ export default function ActivityPage() {
         ) : (
           filtered.map((row, i) => <ActivityRow key={activityKey(row, i)} row={row} />)
         )}
+      </div>
       </div>
     </div>
   );

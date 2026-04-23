@@ -22,6 +22,7 @@ import { getAuroSignFields } from '@/lib/auroWallet';
 import { Field, PublicKey, Poseidon, UInt32 } from 'o1js';
 import { DELEGATION_KEY_HASH_PREFIX } from 'contracts';
 import ConnectNotice from '@/components/ConnectNotice';
+import AccountTabs from '@/components/AccountTabs';
 import Link from 'next/link';
 import {
   clearPendingSubaccount,
@@ -112,6 +113,7 @@ export default function AccountPage() {
           />
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
+            <AccountTabs address={multisig.address} active="account" />
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
