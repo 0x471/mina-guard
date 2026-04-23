@@ -33,6 +33,7 @@ export default function TransactionDetailPage() {
     proposalsAddress,
     startOperation,
     isOperating,
+    indexerStatus,
   } = useAppContext();
 
   const proposalHash = params.id as string;
@@ -267,7 +268,13 @@ export default function TransactionDetailPage() {
               />
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
-            <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
+            <DetailRow
+              label="Expiry Block"
+              value={renderExpiry(
+                proposal.expiryBlock,
+                indexerStatus?.latestChainHeight,
+              )}
+            />
             {proposal.memo && <DetailRow label="Memo" value={proposal.memo} />}
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
@@ -389,4 +396,20 @@ function DetailRow({
       )}
     </div>
   );
+}
+
+/** Formats expiryBlock with a human countdown or EXPIRED badge. */
+function renderExpiry(
+  expiryBlock: string | null | undefined,
+  currentHeight: number | null | undefined,
+): string {
+  const n = Number(expiryBlock ?? '0');
+  if (!Number.isFinite(n) || n === 0) return 'never expires';
+  if (!currentHeight) return `block ${n.toLocaleString()}`;
+  if (n <= currentHeight) {
+    return `EXPIRED at block ${n.toLocaleString()} (now ${currentHeight.toLocaleString()})`;
+  }
+  const blocks = n - currentHeight;
+  const days = (blocks * 30) / 86_400;
+  return `block ${n.toLocaleString()} · expires in ${blocks.toLocaleString()} blocks (≈${days.toFixed(1)} days)`;
 }
