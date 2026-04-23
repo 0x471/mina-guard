@@ -29,6 +29,7 @@ export interface SerializedProposalRecord {
   receivers: ProposalReceiverRecord[];
   recipientCount: number;
   totalAmount: string | null;
+  memo: string | null;
 }
 
 type ProposalWithReceivers = Proposal & {
@@ -75,5 +76,6 @@ export function serializeProposalRecord(
     receivers,
     recipientCount: receivers.length,
     totalAmount,
+    memo: proposal.memo,
   };
 }
