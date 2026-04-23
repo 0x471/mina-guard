@@ -1,5 +1,6 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
+import { decodeMinaMemo } from './memo-decode.js';
 
 /**
  * Polls the Mina daemon for incoming MINA transfers targeting any tracked
@@ -74,7 +75,7 @@ export class IncomingPoller {
               contractId,
               fromAddress: uc.source?.publicKey ?? 'unknown',
               amount: uc.amount,
-              memo: uc.memo ?? null,
+              memo: decodeMinaMemo(uc.memo) ?? uc.memo ?? null,
               blockHeight: height,
               txHash: uc.hash,
             },
@@ -116,7 +117,10 @@ export class IncomingPoller {
                 contractId,
                 fromAddress,
                 amount: total.toString(),
-                memo: zk.zkappCommand?.memo ?? null,
+                memo:
+                  decodeMinaMemo(zk.zkappCommand?.memo) ??
+                  zk.zkappCommand?.memo ??
+                  null,
                 blockHeight: height,
                 txHash: zk.hash,
               },
