@@ -864,8 +864,18 @@ export async function executeTransferBackend(
     : Field(0);
   const allowlistCheck = new RecipientAllowlistCheck({ witness0, value0 });
 
+  // Forward the operator's memo from the original propose tx into the
+  // actual transfer tx — this is the memo the exchange sees, per
+  // self-custody spec §4.1 ("included with the transfer for exchange
+  // identification").
+  const proposalRow = await prisma.proposal.findFirst({
+    where: { proposalHash: proposalHash.toString() },
+    select: { memo: true },
+  });
+  const memo = proposalRow?.memo ?? '';
+
   const tx = await Mina.transaction(
-    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    { sender: feePayer.pub, fee: UInt64.from(100_000_000), memo },
     async () => {
       await zkApp.executeTransfer(
         proposal,
