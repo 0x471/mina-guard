@@ -34,6 +34,7 @@ function CreateAccountWizard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const parentAddress = searchParams?.get('parent') ?? null;
+  const initialDelegatePrefill = searchParams?.get('initialDelegate') ?? null;
   const isSubaccount = !!parentAddress;
   const {
     wallet,
@@ -71,7 +72,7 @@ function CreateAccountWizard() {
   // Optional on-chain recipient allowlist enforcement on executeTransfer.
   const [enforceRecipientAllowlist, setEnforceRecipientAllowlist] = useState(false);
   // Optional initial delegate (child only — sets account.delegate atomically with executeSetupChild).
-  const [initialDelegate, setInitialDelegate] = useState('');
+  const [initialDelegate, setInitialDelegate] = useState(initialDelegatePrefill ?? '');
   const [formError, setFormError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
