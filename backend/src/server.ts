@@ -4,6 +4,7 @@ import express from 'express';
 import { prisma } from './db.js';
 import { loadConfig } from './config.js';
 import { MinaGuardIndexer } from './indexer.js';
+import { IncomingPoller } from './incoming-poller.js';
 import { createApiRouter } from './routes.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 
@@ -13,6 +14,7 @@ async function main(): Promise<void> {
 
   await prisma.$connect();
   const indexer = new MinaGuardIndexer(config);
+  const incoming = new IncomingPoller(config);
 
   const app = express();
   app.use(cors());
@@ -23,11 +25,12 @@ async function main(): Promise<void> {
   const server = app.listen(config.port, () => {
     console.log(`[backend] listening on http://localhost:${config.port}`);
   });
-  const shutdown = createGracefulShutdown(server, indexer);
+  const shutdown = createGracefulShutdown(server, indexer, incoming);
 
   // Start the indexer after the HTTP server is listening so the /health
   // endpoint is reachable while the first (potentially slow) tick runs.
   await indexer.start();
+  await incoming.start();
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');
@@ -46,7 +49,11 @@ async function main(): Promise<void> {
 }
 
 /** Builds an idempotent graceful shutdown handler for process signal/error exits. */
-function createGracefulShutdown(server: Server, indexer: MinaGuardIndexer) {
+function createGracefulShutdown(
+  server: Server,
+  indexer: MinaGuardIndexer,
+  incoming: IncomingPoller,
+) {
   let shutdownPromise: Promise<void> | null = null;
 
   return (reason: string, exitCode = 0): Promise<void> => {
@@ -55,6 +62,7 @@ function createGracefulShutdown(server: Server, indexer: MinaGuardIndexer) {
     shutdownPromise = (async () => {
       console.log(`[backend] shutdown started (${reason})`);
       indexer.stop();
+      incoming.stop();
 
       await closeHttpServer(server);
       await prisma.$disconnect();
