@@ -150,6 +150,7 @@ function NewTransactionPageInner() {
                 isSubmitting={isOperating}
                 txType={txType}
                 children={children}
+                contractAddress={multisig.address}
               />
             </div>
           </div>

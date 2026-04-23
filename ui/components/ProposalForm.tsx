@@ -2,7 +2,11 @@
 
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
-import { fetchBalance } from '@/lib/api';
+import {
+  fetchBalance,
+  fetchRecipientAliases,
+  type RecipientAliasRecord,
+} from '@/lib/api';
 import { formatMina, NewProposalInput, TxType, type ContractSummary } from '@/lib/types';
 
 interface ProposalFormProps {
@@ -14,6 +18,8 @@ interface ProposalFormProps {
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
+  /** Guard address — used to fetch per-contract aliases for the transfer picker. */
+  contractAddress?: string;
 }
 
 /** Dynamic proposal form that maps UI inputs to MinaGuard tx type payloads. */
@@ -25,6 +31,7 @@ export default function ProposalForm({
   isSubmitting,
   txType,
   children = [],
+  contractAddress,
 }: ProposalFormProps) {
   const [transferLines, setTransferLines] = useState('');
   const [newOwner, setNewOwner] = useState('');
@@ -32,6 +39,17 @@ export default function ProposalForm({
   const [recipientAddress, setRecipientAddress] = useState('');
   const [memo, setMemo] = useState('');
   const memoByteLength = new TextEncoder().encode(memo).length;
+  const [aliases, setAliases] = useState<RecipientAliasRecord[]>([]);
+  useEffect(() => {
+    if (!contractAddress) return;
+    let cancelled = false;
+    void fetchRecipientAliases(contractAddress).then((rows) => {
+      if (!cancelled) setAliases(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [contractAddress]);
   const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
   useEffect(() => {
     setNewThreshold(Math.max(1, currentThreshold));
@@ -185,6 +203,30 @@ export default function ProposalForm({
           <label className="block text-sm text-safe-text">
             {txType === 'allocateChild' ? 'Subaccount allocations' : 'Recipients'}
           </label>
+          {txType === 'transfer' && aliases.length > 0 && (
+            <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
+              <p className="text-safe-text">Address book (click to insert):</p>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {aliases.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => {
+                      const line = `${a.address},`;
+                      const next = transferLines.trim()
+                        ? `${transferLines.trim()}\n${line}`
+                        : line;
+                      setTransferLines(next);
+                    }}
+                    className="bg-safe-green/20 border border-safe-green/40 text-safe-green hover:bg-safe-green/30 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                    title={a.address}
+                  >
+                    {a.alias}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {txType === 'allocateChild' && children.length > 0 && (
             <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
               <p className="text-safe-text">Indexed subaccounts (click to copy):</p>
