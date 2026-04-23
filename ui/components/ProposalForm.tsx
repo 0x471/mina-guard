@@ -4,10 +4,19 @@ import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
 import {
   fetchBalance,
+  fetchIndexerStatus,
   fetchRecipientAliases,
   type RecipientAliasRecord,
 } from '@/lib/api';
 import { formatMina, NewProposalInput, TxType, type ContractSummary } from '@/lib/types';
+
+// Lightnet block time ~30s; devnet ~3min. We bias toward lightnet for
+// setup-wizard defaults — 20k blocks ≈ 7 days on lightnet, ≈ 42 days on
+// devnet. The operator can always override, and 0 is explicit "never
+// expires" — the goal here is just to pick a non-zero default so pending
+// proposals don't sit indefinitely (see self-custody spec §4.1).
+const DEFAULT_EXPIRY_WINDOW_BLOCKS = 20_000;
+const SECONDS_PER_BLOCK = 30;
 
 interface ProposalFormProps {
   owners: string[];
@@ -56,7 +65,33 @@ export default function ProposalForm({
   }, [currentThreshold]);
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
-  const [expiryBlock, setExpiryBlock] = useState('0');
+  const [expiryBlock, setExpiryBlock] = useState('');
+  const [currentHeight, setCurrentHeight] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchIndexerStatus().then((s) => {
+      if (cancelled) return;
+      const h = s?.latestChainHeight ?? 0;
+      if (h > 0) {
+        setCurrentHeight(h);
+        if (expiryBlock === '') {
+          setExpiryBlock(String(h + DEFAULT_EXPIRY_WINDOW_BLOCKS));
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Only seed once on first indexer read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const expiryBlockNum = Number(expiryBlock);
+  const expiryIsValid = expiryBlock === '' || (Number.isFinite(expiryBlockNum) && expiryBlockNum >= 0);
+  const expiryBlocksFromNow =
+    currentHeight !== null && expiryBlockNum > currentHeight
+      ? expiryBlockNum - currentHeight
+      : 0;
+  const expiryDays = (expiryBlocksFromNow * SECONDS_PER_BLOCK) / 86_400;
 
   // Subaccount-action fields.
   const [targetChild, setTargetChild] = useState<string>('');
@@ -534,13 +569,36 @@ export default function ProposalForm({
         </div>
       )}
 
-      <FormInput
-        label="Expiry Block (0 = no expiry)"
-        value={expiryBlock}
-        onChange={setExpiryBlock}
-        placeholder="0"
-        inputMode="numeric"
-      />
+      <div className="space-y-1">
+        <label className="block text-sm text-safe-text">
+          Expires at block{' '}
+          <span className="opacity-60">(0 = never expires)</span>
+        </label>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={expiryBlock}
+          onChange={(e) => setExpiryBlock(e.target.value)}
+          placeholder="0"
+          className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:border-safe-green"
+        />
+        <div className="flex justify-between items-center text-xs text-safe-text opacity-70">
+          <span>
+            {currentHeight !== null
+              ? `Current block: ${currentHeight.toLocaleString()}`
+              : 'Loading current block height…'}
+          </span>
+          <span className={!expiryIsValid ? 'text-red-400' : ''}>
+            {!expiryIsValid
+              ? 'Invalid block number'
+              : expiryBlockNum === 0 || expiryBlock === ''
+                ? 'never expires'
+                : currentHeight !== null && expiryBlockNum <= currentHeight
+                  ? 'ALREADY EXPIRED — propose will revert'
+                  : `expires in ${expiryBlocksFromNow.toLocaleString()} blocks (≈${expiryDays.toFixed(1)} days)`}
+          </span>
+        </div>
+      </div>
 
       <div className="space-y-1">
         <label className="block text-sm text-safe-text">
