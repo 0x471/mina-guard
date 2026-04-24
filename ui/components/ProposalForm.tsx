@@ -253,28 +253,45 @@ export default function ProposalForm({
           <label className="block text-sm text-safe-text">
             {txType === 'allocateChild' ? 'Subaccount allocations' : 'Recipients'}
           </label>
-          {txType === 'transfer' && aliases.length > 0 && (
-            <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
-              <p className="text-safe-text">Address book (click to insert):</p>
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
+          {txType === 'transfer' && (
+            <div className="space-y-1">
+              <label className="block text-xs text-safe-text">
+                Destination{' '}
+                <span className="opacity-60">(populates first recipient line)</span>
+              </label>
+              <select
+                value=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  // "other" just drops focus into the textarea.
+                  if (v === 'other') {
+                    e.target.value = '';
+                    return;
+                  }
+                  const alias = aliases.find((a) => a.id === Number(v));
+                  if (!alias) return;
+                  const line = `${alias.address},`;
+                  const next = transferLines.trim()
+                    ? `${transferLines.trim()}\n${line}`
+                    : line;
+                  setTransferLines(next);
+                  e.target.value = '';
+                }}
+                className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green"
+              >
+                <option value="">
+                  {aliases.length > 0
+                    ? 'Pick a saved destination…'
+                    : 'No saved destinations — pick Other'}
+                </option>
                 {aliases.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => {
-                      const line = `${a.address},`;
-                      const next = transferLines.trim()
-                        ? `${transferLines.trim()}\n${line}`
-                        : line;
-                      setTransferLines(next);
-                    }}
-                    className="bg-safe-green/20 border border-safe-green/40 text-safe-green hover:bg-safe-green/30 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                    title={a.address}
-                  >
-                    {a.alias}
-                  </button>
+                  <option key={a.id} value={a.id}>
+                    {a.alias} — {a.address.slice(0, 10)}…{a.address.slice(-6)}
+                  </option>
                 ))}
-              </div>
+                <option value="other">Other (enter address manually below)</option>
+              </select>
             </div>
           )}
           {txType === 'allocateChild' && children.length > 0 && (
