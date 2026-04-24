@@ -260,6 +260,7 @@ export async function approveProposalViaBackend(params: {
 export async function executeTransferViaBackendPath(params: {
   contractAddress: string;
   proposal: Proposal;
+  feePayer: string;
 }, onProgress?: OnProgress): Promise<string | null> {
   const { executeTransferViaBackend } = await import('./api');
   const progress = proxiedProgress(onProgress);
@@ -268,10 +269,15 @@ export async function executeTransferViaBackendPath(params: {
     proposal: params.proposal,
     fallbackGuardAddress: params.contractAddress,
   });
-  progress('Submitting to backend prover...');
-  const result = await executeTransferViaBackend({ proposal: proposalJson as never });
+  progress('Submitting to backend prover (proving step)...');
+  const result = await executeTransferViaBackend({
+    proposal: proposalJson as never,
+    feePayer: params.feePayer,
+  });
   if ('error' in result) throw new Error(result.error);
-  return result.txHash;
+  progress('Signing + submitting with Auro...');
+  const { sendTransaction } = await import('./auroWallet');
+  return await sendTransaction(result.transactionJson);
 }
 
 /**
@@ -280,13 +286,16 @@ export async function executeTransferViaBackendPath(params: {
  * single-key-delegate (which need the user's signature) and CREATE_CHILD
  * (finalized via the wizard's separate deployAndSetupChild flow).
  *
- * Execute methods are permissionless in the contract — no Auro prompt.
+ * Execute methods are permissionless in the contract. Whoever triggers
+ * pays the Mina tx fee — their Auro wallet signs the fee-payer + submits
+ * after backend returns the proven tx JSON.
  */
 export async function executeAnyViaBackend(params: {
   contractAddress: string;
   proposal: Proposal;
   childAddress?: string;
   enabled?: boolean;
+  feePayer: string;
 }, onProgress?: OnProgress): Promise<string | null> {
   const { executeViaBackend } = await import('./api');
   const progress = proxiedProgress(onProgress);
@@ -295,14 +304,17 @@ export async function executeAnyViaBackend(params: {
     proposal: params.proposal,
     fallbackGuardAddress: params.contractAddress,
   });
-  progress('Submitting to backend prover...');
+  progress('Submitting to backend prover (proving step)...');
   const result = await executeViaBackend({
     proposal: proposalJson as never,
     childAddress: params.childAddress,
     enabled: params.enabled,
+    feePayer: params.feePayer,
   });
   if ('error' in result) throw new Error(result.error);
-  return result.txHash;
+  progress('Signing + submitting with Auro...');
+  const { sendTransaction } = await import('./auroWallet');
+  return await sendTransaction(result.transactionJson);
 }
 
 /**

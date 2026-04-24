@@ -37,6 +37,8 @@ export interface UseAutoExecuteArgs {
   childEnabled?: boolean;
   /** Disable auto-execute entirely (e.g. stale config, not an owner). */
   enabled?: boolean;
+  /** Connected wallet pubkey — pays the Mina tx fee + signs fee-payer via Auro. */
+  feePayer?: string | null;
 }
 
 export interface UseAutoExecuteResult {
@@ -55,6 +57,7 @@ export function useAutoExecuteOnThreshold(
     threshold,
     approvalAddresses,
     childAddress,
+    feePayer,
     childEnabled,
     enabled = true,
   } = args;
@@ -103,11 +106,17 @@ export function useAutoExecuteOnThreshold(
         }
         setAutoExecuting(true);
         try {
+          if (!feePayer) {
+            throw new Error(
+              'Auto-execute requires a connected wallet to pay the fee.',
+            );
+          }
           await executeAnyViaBackend({
             contractAddress,
             proposal,
             childAddress,
             enabled: childEnabled,
+            feePayer,
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -134,6 +143,7 @@ export function useAutoExecuteOnThreshold(
     approvalAddresses.length,
     childAddress,
     childEnabled,
+    feePayer,
     lsKey,
   ]);
 

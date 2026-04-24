@@ -92,7 +92,8 @@ export default function TransactionDetailPage() {
     threshold: multisig?.threshold ?? null,
     approvalAddresses,
     childAddress: proposal?.childAccount ?? undefined,
-    enabled: canExecute && !isOperating,
+    enabled: canExecute && !isOperating && !!wallet.address,
+    feePayer: wallet.address,
   });
 
   /** Submits an on-chain approveProposal transaction. */
@@ -151,6 +152,7 @@ export default function TransactionDetailPage() {
         proposal: captured.proposal,
         childAddress: captured.proposal.childAccount ?? undefined,
         enabled,
+        feePayer: captured.executorAddress,
       }, onProgress);
       if (result) success = true;
       return result;

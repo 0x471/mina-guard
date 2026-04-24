@@ -154,40 +154,41 @@ export async function approveViaBackend(params: {
   }
 }
 
-/** Backend-proving executeTransfer. Server rebuilds allowlist witness. */
+/** Backend-proving executeTransfer. Returns proven JSON for client to submit. */
 export async function executeTransferViaBackend(params: {
   proposal: BackendProposalInput;
-}): Promise<{ txHash: string } | { error: string }> {
+  feePayer: string;
+}): Promise<{ transactionJson: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/execute-transfer`, {
       method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
-    return body as { txHash: string };
+    return body as { transactionJson: string };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 /**
- * Unified backend-proving execute dispatcher. Server routes on
- * `proposal.txType` + `destination` to call the right zkApp method. Handles
- * every execute* variant — no Auro round-trip because these methods are
- * permissionless once the approval threshold is met.
+ * Unified backend-proving execute dispatcher. Returns proven-but-unsigned
+ * tx JSON. Auro on the client signs the fee-payer and submits. Execute
+ * methods are permissionless in-contract; whoever triggers pays the fee.
  */
 export async function executeViaBackend(params: {
   proposal: BackendProposalInput;
   childAddress?: string;
   enabled?: boolean;
-}): Promise<{ txHash: string } | { error: string }> {
+  feePayer: string;
+}): Promise<{ transactionJson: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/execute`, {
       method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
-    return body as { txHash: string };
+    return body as { transactionJson: string };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
@@ -204,7 +205,8 @@ export async function delegateSingleKeyViaBackend(params: {
   delegationKeyPub: string;
   expiryBlock: string | null;
   signatureBase58: string;
-}): Promise<{ txHash: string; feePayerAddress: string } | { error: string }> {
+  feePayer: string;
+}): Promise<{ transactionJson: string } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/delegate-single-key`, {
       method: 'POST',
@@ -215,7 +217,7 @@ export async function delegateSingleKeyViaBackend(params: {
     if (!response.ok) {
       return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
     }
-    return body as { txHash: string; feePayerAddress: string };
+    return body as { transactionJson: string };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

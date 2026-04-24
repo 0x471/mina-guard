@@ -770,11 +770,16 @@ function SingleKeyDelegateCard({ contract }: { contract: ContractSummary }) {
         delegationKeyPub: wallet.address!,
         expiryBlock: expiry || null,
         signatureBase58: signed.signature,
+        feePayer: wallet.address!,
       });
       if ('error' in result) {
         throw new Error(result.error);
       }
-      return `Delegate rotated (tx ${result.txHash.slice(0, 10)}…)`;
+      onProgress('Signing + submitting with Auro (your wallet pays the fee)…');
+      const { sendTransaction } = await import('@/lib/auroWallet');
+      const txHash = await sendTransaction(result.transactionJson);
+      if (!txHash) throw new Error('Auro rejected the submission.');
+      return `Delegate rotated (tx ${txHash.slice(0, 10)}…)`;
     });
     setOpen(false);
     setDelegate('');
