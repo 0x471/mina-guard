@@ -11,6 +11,10 @@ isolation.
 - `NEXT_PUBLIC_AUTH_DISABLED=true` in `ui/.env.local` (skip Google OAuth for
   local demo) and `AUTH_DISABLED=true` in `backend/.env`
 - Auro wallet installed, connected to lightnet (`http://127.0.0.1:18080/graphql`)
+- **Every owner's Auro wallet must be funded.** User-pays model: each
+  propose / approve / execute tx is paid by the connected wallet, not by
+  any backend-managed fee-payer. Fund Auro via the header's "Fund" button
+  on testnets.
 
 ---
 

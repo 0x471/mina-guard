@@ -88,12 +88,24 @@ Positive balance changes become `IncomingTransfer` rows. Memos are
 base58-decoded to UTF-8 via `memo-decode.ts`. Surfaced on the
 Activity tab's Inbound filter.
 
-### Backend-proving model
-The UI does not compile o1js in the browser. All `execute*` /
-`propose` / `approve` / `delegateSingleKey` / `deploy-and-setup` txs
-are built + proved + submitted by the backend. Auro only signs a
-single-Field `proposalHash` (or the canonical 7-field delegation
-message) — works on Ledger too. `tx-service.ts` is the entry point.
+### Backend-proving, user-pays model
+The UI does not compile o1js in the browser. The backend does the heavy
+`MinaGuard.compile()` + `tx.prove()` work. But the backend **holds no
+Mina payment keys** — every `/api/tx/*` endpoint returns a proven-but-
+unsigned tx JSON, and the user's Auro wallet adds the fee-payer
+signature + broadcasts to the Mina node. `tx-service.ts` is the entry
+point; `acquireLightnetFeePayer` does not exist in production paths.
+
+Every request to `/api/tx/*` requires a `feePayer` field naming the
+connected wallet's pubkey — that's who pays the fee. Auro signs + sends
+via `window.mina.sendTransaction(transactionJson)`. Auro handles
+user-level auth (per-method confirmation); backend-proving just removes
+the browser-side `o1js.compile` cost and SharedArrayBuffer requirement.
+
+In a multisig setup, every owner who participates (propose, approve,
+execute) needs their own funded Auro account — they each pay for their
+own tx. The guard account itself is funded separately for transfers to
+exchange destinations.
 
 ### NextAuth Google OAuth
 `@o1labs.org`-allowlisted sign-in via NextAuth; session mints an HS256
