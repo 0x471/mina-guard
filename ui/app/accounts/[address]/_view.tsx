@@ -117,7 +117,7 @@ export default function AccountPage() {
             <AccountTabs address={multisig.address} active="account" />
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Custody Account Address</p>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-sm font-mono flex min-w-0">
                     <span className="truncate">{multisig.address.slice(0, -4)}</span>
@@ -157,7 +157,7 @@ export default function AccountPage() {
               </div>
 
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Balance</p>
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Total Balance</p>
                 <p className="text-lg font-semibold mt-1">
                   {balance !== null ? formatMina(balance) : '-'}{' '}
                   <span className="text-sm text-safe-text font-normal">MINA</span>
@@ -228,7 +228,21 @@ export default function AccountPage() {
               walletAddress={wallet.address}
             />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Link
+                href={`/transactions/new?contract=${multisig.address}`}
+                className="bg-safe-green text-safe-dark border border-safe-green rounded-xl p-5 hover:brightness-110 transition-all font-semibold"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wider mb-1 opacity-80">
+                      Primary action
+                    </p>
+                    <p className="text-sm font-semibold">➕ Create Transfer Request</p>
+                  </div>
+                  <span className="text-sm">→</span>
+                </div>
+              </Link>
               <Link
                 href={`/delegation/${multisig.address}`}
                 className="bg-safe-gray border border-safe-border rounded-xl p-5 hover:border-safe-green transition-colors"
@@ -236,9 +250,9 @@ export default function AccountPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
-                      Delegation
+                      Manage Delegation
                     </p>
-                    <p className="text-sm opacity-80">BP staking dashboard.</p>
+                    <p className="text-sm opacity-80">🔗 BP staking dashboard</p>
                   </div>
                   <span className="text-safe-green text-sm">→</span>
                 </div>
@@ -250,11 +264,9 @@ export default function AccountPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs text-safe-text uppercase tracking-wider mb-1">
-                      Activity
+                      View Activity
                     </p>
-                    <p className="text-sm opacity-80">
-                      Inbound + outbound + pending approvals.
-                    </p>
+                    <p className="text-sm opacity-80">📊 Inbound + pending</p>
                   </div>
                   <span className="text-safe-green text-sm">→</span>
                 </div>
