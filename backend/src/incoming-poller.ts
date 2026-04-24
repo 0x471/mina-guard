@@ -3,6 +3,84 @@ import type { BackendConfig } from './config.js';
 import { decodeMinaMemo } from './memo-decode.js';
 
 /**
+ * Pure extraction — no IO. Walks the block list and yields the rows we
+ * would upsert, so unit tests can assert the mapping logic in isolation.
+ * Handles both userCommands AND zkappCommands.accountUpdates per-positive-
+ * balance-change. Fields match `IncomingTransfer` columns.
+ */
+export interface ExtractedIncomingRow {
+  contractId: number;
+  txHash: string;
+  fromAddress: string;
+  amount: string;
+  memo: string | null;
+  blockHeight: number;
+}
+
+export function extractIncomingFromBlocks(
+  blocks: BestChainBlock[],
+  addressToId: Map<string, number>,
+  cursor: number,
+): { rows: ExtractedIncomingRow[]; newCursor: number } {
+  const rows: ExtractedIncomingRow[] = [];
+  let newCursor = cursor;
+  for (const block of blocks) {
+    const height = Number(block.protocolState.consensusState.blockHeight);
+    if (height <= cursor) continue;
+
+    for (const uc of block.transactions.userCommands ?? []) {
+      const recipient = uc.receiver?.publicKey;
+      if (!recipient) continue;
+      const contractId = addressToId.get(recipient);
+      if (contractId === undefined) continue;
+      if (uc.kind && uc.kind !== 'PAYMENT') continue;
+      rows.push({
+        contractId,
+        txHash: uc.hash,
+        fromAddress: uc.source?.publicKey ?? 'unknown',
+        amount: uc.amount,
+        memo: decodeMinaMemo(uc.memo) ?? uc.memo ?? null,
+        blockHeight: height,
+      });
+    }
+
+    for (const zk of block.transactions.zkappCommands ?? []) {
+      if (zk.failureReason?.failures?.length) continue;
+      const aus = zk.zkappCommand?.accountUpdates ?? [];
+      const perContract = new Map<number, bigint>();
+      for (const au of aus) {
+        const pk = au.body?.publicKey;
+        if (!pk) continue;
+        const contractId = addressToId.get(pk);
+        if (contractId === undefined) continue;
+        const bc = au.body?.balanceChange;
+        if (!bc) continue;
+        const magnitude = BigInt(bc.magnitude ?? '0');
+        if (magnitude === 0n) continue;
+        const positive = (bc.sgn ?? 'Positive') === 'Positive';
+        if (!positive) continue;
+        perContract.set(contractId, (perContract.get(contractId) ?? 0n) + magnitude);
+      }
+      if (perContract.size === 0) continue;
+      const fromAddress = zk.zkappCommand?.feePayer?.body?.publicKey ?? 'unknown';
+      for (const [contractId, total] of perContract) {
+        rows.push({
+          contractId,
+          txHash: zk.hash,
+          fromAddress,
+          amount: total.toString(),
+          memo: decodeMinaMemo(zk.zkappCommand?.memo) ?? zk.zkappCommand?.memo ?? null,
+          blockHeight: height,
+        });
+      }
+    }
+
+    if (height > newCursor) newCursor = height;
+  }
+  return { rows, newCursor };
+}
+
+/**
  * Polls the Mina daemon for incoming MINA transfers targeting any tracked
  * MinaGuard contract. Populates the `IncomingTransfer` table so the UI's
  * Activity tab can surface inbound payments alongside outgoing proposals.
@@ -57,79 +135,24 @@ export class IncomingPoller {
       const blocks = await this.fetchRecentBlocks(50);
       if (blocks.length === 0) return;
 
-      let newCursor = cursor;
-      for (const block of blocks) {
-        const height = Number(block.protocolState.consensusState.blockHeight);
-        if (height <= cursor) continue;
-
-        for (const uc of block.transactions.userCommands ?? []) {
-          const recipient = uc.receiver?.publicKey;
-          if (!recipient) continue;
-          const contractId = addressToId.get(recipient);
-          if (contractId === undefined) continue;
-          if (uc.kind && uc.kind !== 'PAYMENT') continue;
-
-          await prisma.incomingTransfer.upsert({
-            where: { contractId_txHash: { contractId, txHash: uc.hash } },
-            create: {
-              contractId,
-              fromAddress: uc.source?.publicKey ?? 'unknown',
-              amount: uc.amount,
-              memo: decodeMinaMemo(uc.memo) ?? uc.memo ?? null,
-              blockHeight: height,
-              txHash: uc.hash,
-            },
-            update: {},
-          });
-        }
-
-        // zkappCommands also encode payments in modern o1js: e.g.
-        // AccountUpdate.createSigned(sender).send({ to, amount }) lands as a
-        // zkappCommand whose accountUpdates include a positive balanceChange
-        // on `to`. We sum all positive balanceChanges per tracked address.
-        for (const zk of block.transactions.zkappCommands ?? []) {
-          if (zk.failureReason?.failures?.length) continue;
-          const aus = zk.zkappCommand?.accountUpdates ?? [];
-          const perContract = new Map<number, bigint>();
-          for (const au of aus) {
-            const pk = au.body?.publicKey;
-            if (!pk) continue;
-            const contractId = addressToId.get(pk);
-            if (contractId === undefined) continue;
-            const bc = au.body?.balanceChange;
-            if (!bc) continue;
-            const magnitude = BigInt(bc.magnitude ?? '0');
-            if (magnitude === 0n) continue;
-            const positive = (bc.sgn ?? 'Positive') === 'Positive';
-            if (!positive) continue;
-            perContract.set(
-              contractId,
-              (perContract.get(contractId) ?? 0n) + magnitude,
-            );
-          }
-          if (perContract.size === 0) continue;
-          const fromAddress =
-            zk.zkappCommand?.feePayer?.body?.publicKey ?? 'unknown';
-          for (const [contractId, total] of perContract) {
-            await prisma.incomingTransfer.upsert({
-              where: { contractId_txHash: { contractId, txHash: zk.hash } },
-              create: {
-                contractId,
-                fromAddress,
-                amount: total.toString(),
-                memo:
-                  decodeMinaMemo(zk.zkappCommand?.memo) ??
-                  zk.zkappCommand?.memo ??
-                  null,
-                blockHeight: height,
-                txHash: zk.hash,
-              },
-              update: {},
-            });
-          }
-        }
-
-        if (height > newCursor) newCursor = height;
+      const { rows, newCursor } = extractIncomingFromBlocks(
+        blocks,
+        addressToId,
+        cursor,
+      );
+      for (const r of rows) {
+        await prisma.incomingTransfer.upsert({
+          where: { contractId_txHash: { contractId: r.contractId, txHash: r.txHash } },
+          create: {
+            contractId: r.contractId,
+            fromAddress: r.fromAddress,
+            amount: r.amount,
+            memo: r.memo,
+            blockHeight: r.blockHeight,
+            txHash: r.txHash,
+          },
+          update: {},
+        });
       }
 
       if (newCursor > cursor) {
