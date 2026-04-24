@@ -53,6 +53,8 @@ export interface Proposal {
   recipientCount: number;
   totalAmount: string | null;
   memo: string | null;
+  createTxHash: string | null;
+  executeTxHash: string | null;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */

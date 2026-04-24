@@ -482,6 +482,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     recipientCount: asNullableNumber(input.recipientCount) ?? receivers.length,
     totalAmount,
     memo: asNullableString(input.memo),
+    createTxHash: asNullableString(input.createTxHash),
+    executeTxHash: asNullableString(input.executeTxHash),
   };
 }
 
