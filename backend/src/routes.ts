@@ -1,6 +1,38 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { PublicKey, fetchAccount } from 'o1js';
+
+/**
+ * Validates a B62-format Mina pubkey. Catches garbage submitted in the
+ * `feePayer` field before it reaches o1js's Mina.transaction(), which
+ * would otherwise throw a cryptic binding-level error.
+ */
+function isValidB62Pubkey(addr: string): boolean {
+  if (typeof addr !== 'string' || !addr.startsWith('B62') || addr.length < 50) {
+    return false;
+  }
+  try {
+    PublicKey.fromBase58(addr);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rate limiter for `/api/tx/*` — each tx call triggers 7-60s of CPU
+ * in tx.prove(). A single authenticated client flooding this path could
+ * pin a CPU core and block every other user. 20 proves/minute per
+ * originating IP is a generous cap for any legitimate operator.
+ */
+const txRouteLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many tx build requests; try again in a minute.' },
+});
 
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
@@ -55,6 +87,29 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
+
+  // Rate-limit the CPU-heavy proving endpoints. See `txRouteLimiter`.
+  router.use('/api/tx', txRouteLimiter);
+
+  /**
+   * Shared middleware for `/api/tx/*`: validates `feePayer` in the body
+   * as a real B62 pubkey before any tx-service code tries to build a
+   * transaction. Saves ~7-60s of wasted prove time on malformed input.
+   * Skipped for `deploy-and-setup` (uses `feePayer` at a different
+   * validation point inside that handler).
+   */
+  router.use('/api/tx', (req, res, next) => {
+    if (req.method !== 'POST') return next();
+    const body = (req.body ?? {}) as { feePayer?: unknown };
+    if (body.feePayer === undefined) return next(); // handler will reject
+    if (typeof body.feePayer !== 'string' || !isValidB62Pubkey(body.feePayer)) {
+      res.status(400).json({
+        error: 'feePayer must be a valid B62… Mina public key',
+      });
+      return;
+    }
+    next();
+  });
 
   /** Returns basic health and process liveness metadata. */
   router.get('/health', safe(async (_req, res) => {

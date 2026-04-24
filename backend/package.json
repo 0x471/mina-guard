@@ -17,6 +17,7 @@
     "contracts": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.4.1",
     "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
     "zod": "^3.25"
   },
