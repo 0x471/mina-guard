@@ -339,9 +339,15 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       proposal?: { txType?: string; destination?: string; childAccount?: string } & Record<string, unknown>;
       childAddress?: string;
       enabled?: boolean;
+      feePayer?: string;
     };
     if (!body.proposal || typeof body.proposal.txType !== 'string') {
       res.status(400).json({ error: 'proposal required' });
+      return;
+    }
+    const feePayer = typeof body.feePayer === 'string' ? body.feePayer : '';
+    if (!feePayer) {
+      res.status(400).json({ error: 'feePayer (connected wallet pubkey) required' });
       return;
     }
     const txType = body.proposal.txType;
@@ -351,18 +357,19 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       : (typeof body.proposal.childAccount === 'string' ? body.proposal.childAccount : '');
     const svc = await import('./tx-service.js');
     try {
-      let result: { txHash: string };
+      let result: { transactionJson: string };
       if (destination === '1' || destination === 'remote') {
         if (!childAddress) { res.status(400).json({ error: 'childAddress required for REMOTE' }); return; }
         if (txType === '7') {
-          result = await svc.executeReclaimToParentBackend(config, { proposal: body.proposal as never, childAddress });
+          result = await svc.executeReclaimToParentBackend(config, { proposal: body.proposal as never, childAddress, feePayer });
         } else if (txType === '8') {
-          result = await svc.executeDestroyBackend(config, { proposal: body.proposal as never, childAddress });
+          result = await svc.executeDestroyBackend(config, { proposal: body.proposal as never, childAddress, feePayer });
         } else if (txType === '9') {
           result = await svc.executeEnableChildMultiSigBackend(config, {
             proposal: body.proposal as never,
             childAddress,
             enabled: body.enabled !== false,
+            feePayer,
           });
         } else {
           res.status(400).json({ error: `REMOTE txType ${txType} not executable via backend (use wizard for CREATE_CHILD)` });
@@ -371,17 +378,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       } else {
         // LOCAL
         if (txType === '0') {
-          result = await svc.executeTransferBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeTransferBackend(config, { proposal: body.proposal as never, feePayer });
         } else if (txType === '1' || txType === '2') {
-          result = await svc.executeOwnerChangeBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeOwnerChangeBackend(config, { proposal: body.proposal as never, feePayer });
         } else if (txType === '3') {
-          result = await svc.executeThresholdChangeBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeThresholdChangeBackend(config, { proposal: body.proposal as never, feePayer });
         } else if (txType === '4') {
-          result = await svc.executeDelegateBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeDelegateBackend(config, { proposal: body.proposal as never, feePayer });
         } else if (txType === '6') {
-          result = await svc.executeAllocateToChildrenBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeAllocateToChildrenBackend(config, { proposal: body.proposal as never, feePayer });
         } else if (txType === '10' || txType === '11') {
-          result = await svc.executeUpdateRecipientAllowlistBackend(config, { proposal: body.proposal as never });
+          result = await svc.executeUpdateRecipientAllowlistBackend(config, { proposal: body.proposal as never, feePayer });
         } else {
           res.status(400).json({ error: `Unknown LOCAL txType ${txType}` });
           return;
@@ -399,11 +406,13 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   /** Back-compat alias for the original executeTransfer-only endpoint. */
   router.post('/api/tx/execute-transfer', safe(async (req, res) => {
     if (!config) { res.status(500).json({ error: 'Backend config unavailable' }); return; }
-    const body = (req.body ?? {}) as { proposal?: unknown };
+    const body = (req.body ?? {}) as { proposal?: unknown; feePayer?: string };
     if (!body.proposal) { res.status(400).json({ error: 'proposal required' }); return; }
+    const feePayer = typeof body.feePayer === 'string' ? body.feePayer : '';
+    if (!feePayer) { res.status(400).json({ error: 'feePayer required' }); return; }
     const { executeTransferBackend } = await import('./tx-service.js');
     try {
-      const result = await executeTransferBackend(config, { proposal: body.proposal as never });
+      const result = await executeTransferBackend(config, { proposal: body.proposal as never, feePayer });
       res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -429,14 +438,16 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       delegationKeyPub?: unknown;
       expiryBlock?: unknown;
       signatureBase58?: unknown;
+      feePayer?: unknown;
     };
     const guardAddress = typeof body.guardAddress === 'string' ? body.guardAddress : '';
     const delegationKeyPub = typeof body.delegationKeyPub === 'string' ? body.delegationKeyPub : '';
     const signatureBase58 = typeof body.signatureBase58 === 'string' ? body.signatureBase58 : '';
     const delegate = typeof body.delegate === 'string' && body.delegate ? body.delegate : null;
     const expiryBlock = typeof body.expiryBlock === 'string' ? body.expiryBlock : null;
-    if (!guardAddress || !delegationKeyPub || !signatureBase58) {
-      res.status(400).json({ error: 'guardAddress, delegationKeyPub, signatureBase58 required' });
+    const feePayer = typeof body.feePayer === 'string' ? body.feePayer : '';
+    if (!guardAddress || !delegationKeyPub || !signatureBase58 || !feePayer) {
+      res.status(400).json({ error: 'guardAddress, delegationKeyPub, signatureBase58, feePayer required' });
       return;
     }
     const { delegateSingleKey } = await import('./tx-service.js');
@@ -447,6 +458,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         delegationKeyPub,
         expiryBlock,
         signatureBase58,
+        feePayer,
       });
       res.json(result);
     } catch (err) {
