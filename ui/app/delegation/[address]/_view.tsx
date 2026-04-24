@@ -9,7 +9,9 @@ import { useAppContext } from '@/lib/app-context';
 import {
   fetchChildren,
   fetchBalance,
+  fetchRecipientAliases,
   delegateSingleKeyViaBackend,
+  type RecipientAliasRecord,
 } from '@/lib/api';
 import { getAuroSignFields } from '@/lib/auroWallet';
 import {
@@ -37,6 +39,26 @@ export default function DelegationPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [children, setChildren] = useState<ContractSummary[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
+  // Parent's address book — used to resolve BP delegate addresses AND
+  // child guard addresses into human-readable labels per the mockup.
+  // One fetch, threaded to every DelegationRow.
+  const [aliases, setAliases] = useState<RecipientAliasRecord[]>([]);
+  const aliasByAddress = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of aliases) m.set(a.address, a.alias);
+    return m;
+  }, [aliases]);
+
+  useEffect(() => {
+    if (!urlAddress) return;
+    let cancelled = false;
+    void fetchRecipientAliases(urlAddress).then((r) => {
+      if (!cancelled) setAliases(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlAddress]);
 
   // Sync URL → selected contract (same pattern as /accounts/[address]).
   useEffect(() => {
@@ -155,6 +177,7 @@ export default function DelegationPage() {
               walletType={wallet.type}
               startOperation={startOperation}
               isOperating={isOperating}
+              aliasByAddress={aliasByAddress}
             />
           ))
         )}
@@ -174,6 +197,7 @@ function DelegationRow({
   walletType,
   startOperation,
   isOperating,
+  aliasByAddress,
 }: {
   row: Row;
   walletAddress: string | null;
@@ -183,8 +207,10 @@ function DelegationRow({
     fn: (onProgress: (step: string) => void) => Promise<string | null>,
   ) => Promise<void>;
   isOperating: boolean;
+  aliasByAddress: Map<string, string>;
 }) {
   const c = row.contract;
+  const guardAlias = aliasByAddress.get(c.address);
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState('');
   const [undelegate, setUndelegate] = useState(false);
@@ -293,8 +319,13 @@ function DelegationRow({
               view account →
             </Link>
           </div>
+          {guardAlias && (
+            <p className="text-sm font-semibold text-safe-green mb-0.5">
+              {guardAlias}
+            </p>
+          )}
           <p
-            className="font-mono text-sm truncate"
+            className="font-mono text-xs truncate opacity-80"
             title={c.address}
           >
             {truncateAddress(c.address, 12)}
@@ -310,17 +341,28 @@ function DelegationRow({
 
       <div className="grid grid-cols-2 gap-3 mb-4 text-xs border-t border-safe-border pt-3">
         <div className="min-w-0">
-          <p className="uppercase opacity-70 mb-1">Current delegate</p>
-          <p
-            className={`font-mono break-all ${isSelf ? 'text-amber-300' : ''}`}
-            title={delegate ?? undefined}
-          >
-            {!delegate && !c.delegate
-              ? '(loading…)'
-              : isSelf
-                ? 'unstaked (points to self)'
-                : truncateAddress(delegate!, 10)}
-          </p>
+          <p className="uppercase opacity-70 mb-1">Block producer delegate</p>
+          {!delegate && !c.delegate ? (
+            <p className="font-mono opacity-60">(loading…)</p>
+          ) : isSelf ? (
+            <p className="font-mono text-amber-300">
+              unstaked (points to self)
+            </p>
+          ) : (
+            <>
+              {aliasByAddress.get(delegate!) ? (
+                <p className="text-sm font-semibold text-safe-green">
+                  {aliasByAddress.get(delegate!)}
+                </p>
+              ) : null}
+              <p
+                className="font-mono break-all opacity-80"
+                title={delegate!}
+              >
+                {truncateAddress(delegate!, 10)}
+              </p>
+            </>
+          )}
         </div>
         <div>
           <p className="uppercase opacity-70 mb-1">Rotations so far</p>
