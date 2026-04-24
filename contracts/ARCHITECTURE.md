@@ -550,9 +550,15 @@ the signature, expiry, and re-checks `email` against
 
 ### Known gaps
 
-- **`executeTransfer` allowlist check is shrunk to slot 0**. The
-  9-witness version caused o1js compile memory exhaustion + deadlock;
-  we shrunk to a single witness as a workaround. This means transfer
-  proposals with non-empty slots 1–8 receivers are NOT allowlist-checked
-  for those slots. Operators must stage multi-receiver transfers as
-  separate single-receiver proposals if the allowlist is enforced.
+- **`executeTransfer` allowlist enforcement forces single-receiver**.
+  The 9-witness version caused o1js compile memory exhaustion +
+  deadlock; we shrunk to one witness over `receivers[0]` and added a
+  companion assertion that slots 1..N-1 must be empty when
+  `enforceRecipientAllowlist == 1`. The check is *strict* — a
+  multi-receiver transfer with enforcement on reverts with
+  `Allowlist-enforced transfer accepts only receivers[0]`. This is a
+  *capability* restriction (you can't batch multi-recipient sends
+  through the allowlist), not a *security* bypass (unchecked
+  recipients cannot sneak through). Operators batching to multiple
+  exchanges must stage each send as its own proposal. A proper
+  bulk-transfer method that amortizes the witness cost is a follow-up.
