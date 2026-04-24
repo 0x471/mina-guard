@@ -17,7 +17,11 @@ import {
   type Proposal,
 } from '@/lib/types';
 import AccountTabs from '@/components/AccountTabs';
-import { fetchIndexerStatus } from '@/lib/api';
+import {
+  fetchIndexerStatus,
+  fetchRecipientAliases,
+  type RecipientAliasRecord,
+} from '@/lib/api';
 
 type Filter =
   | 'all'
@@ -61,6 +65,24 @@ export default function ActivityPage() {
       cancelled = true;
     };
   }, []);
+
+  // Resolve counterparty addresses to friendly labels (mockup parity).
+  const [aliases, setAliases] = useState<RecipientAliasRecord[]>([]);
+  const aliasByAddress = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of aliases) m.set(a.address, a.alias);
+    return m;
+  }, [aliases]);
+  useEffect(() => {
+    if (!urlAddress) return;
+    let cancelled = false;
+    void fetchRecipientAliases(urlAddress).then((r) => {
+      if (!cancelled) setAliases(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlAddress]);
 
   useEffect(() => {
     if (!urlAddress) return;
@@ -246,7 +268,13 @@ export default function ActivityPage() {
             No activity matches this filter.
           </p>
         ) : (
-          filtered.map((row, i) => <ActivityRow key={activityKey(row, i)} row={row} />)
+          filtered.map((row, i) => (
+            <ActivityRow
+              key={activityKey(row, i)}
+              row={row}
+              aliasByAddress={aliasByAddress}
+            />
+          ))
         )}
       </div>
       </div>
@@ -284,9 +312,16 @@ function FilterChip({
   );
 }
 
-function ActivityRow({ row }: { row: Row }) {
+function ActivityRow({
+  row,
+  aliasByAddress,
+}: {
+  row: Row;
+  aliasByAddress: Map<string, string>;
+}) {
   if (row.kind === 'incoming') {
     const i = row.incoming;
+    const fromAlias = aliasByAddress.get(i.fromAddress);
     return (
       <div className="bg-safe-gray border border-safe-border rounded-xl p-4 flex items-start gap-4">
         <div className="text-2xl shrink-0">↓</div>
@@ -297,8 +332,18 @@ function ActivityRow({ row }: { row: Row }) {
             </span>
             <span className="text-xs opacity-60">block {i.blockHeight}</span>
           </div>
-          <p className="text-sm font-mono truncate" title={i.fromAddress}>
-            from {truncateAddress(i.fromAddress, 10)}
+          <p className="text-sm truncate" title={i.fromAddress}>
+            from{' '}
+            {fromAlias ? (
+              <>
+                <span className="font-semibold text-safe-green">{fromAlias}</span>{' '}
+                <span className="font-mono text-xs opacity-60">
+                  ({truncateAddress(i.fromAddress, 8)})
+                </span>
+              </>
+            ) : (
+              <span className="font-mono">{truncateAddress(i.fromAddress, 10)}</span>
+            )}
           </p>
           {i.memo && (
             <p className="text-xs opacity-70 mt-1 italic">memo: {i.memo}</p>
@@ -347,15 +392,26 @@ function ActivityRow({ row }: { row: Row }) {
             </span>
           )}
         </div>
-        {p.receivers.length > 0 && (
-          <p
-            className="text-sm font-mono truncate mt-1"
-            title={p.receivers[0].address ?? ''}
-          >
-            to {truncateAddress(p.receivers[0].address ?? '', 10)}
-            {p.receivers.length > 1 && ` +${p.receivers.length - 1} more`}
-          </p>
-        )}
+        {p.receivers.length > 0 && (() => {
+          const addr = p.receivers[0].address ?? '';
+          const toAlias = aliasByAddress.get(addr);
+          return (
+            <p className="text-sm truncate mt-1" title={addr}>
+              to{' '}
+              {toAlias ? (
+                <>
+                  <span className="font-semibold text-safe-green">{toAlias}</span>{' '}
+                  <span className="font-mono text-xs opacity-60">
+                    ({truncateAddress(addr, 8)})
+                  </span>
+                </>
+              ) : (
+                <span className="font-mono">{truncateAddress(addr, 10)}</span>
+              )}
+              {p.receivers.length > 1 && ` +${p.receivers.length - 1} more`}
+            </p>
+          );
+        })()}
         <p className="text-xs opacity-60 mt-1">
           {p.approvalCount} approvals
           {p.createdAtBlock != null && ` · block ${p.createdAtBlock}`}
