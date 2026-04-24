@@ -612,14 +612,21 @@ export default function ProposalForm({
           className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm placeholder:text-safe-border focus:outline-none focus:border-safe-green"
         />
         <div className="flex justify-between text-xs text-safe-text opacity-70">
-          <span>Surfaces on the proposal detail + Activity feed.</span>
+          <span>Will be included with the transfer for exchange identification.</span>
           <span className={memoByteLength > 32 ? 'text-red-400' : ''}>
-            {memoByteLength}/32 bytes
+            {memoByteLength}/32 characters
           </span>
         </div>
       </div>
 
       {validationError && <p className="text-sm text-red-400">{validationError}</p>}
+
+      <div className="bg-safe-dark/30 border border-safe-border rounded-lg px-4 py-3 text-xs opacity-80">
+        This request will require <span className="font-semibold text-safe-green">{currentThreshold}</span> {currentThreshold === 1 ? 'approval' : 'approvals'} before execution.
+        {currentThreshold >= 2 && (
+          <> Separation of duties: the proposer&apos;s signature does not count as an approval.</>
+        )}
+      </div>
 
       <button
         type="submit"
