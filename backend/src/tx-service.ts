@@ -105,6 +105,8 @@ export interface DeployGuardInput {
   owners: string[];
   threshold: number;
   networkId: string;
+  /** Connected wallet pubkey — pays the deploy fee via Auro, post-proving. */
+  feePayer: string;
   delegationKey?: string | null;
   recipientAllowlistRoot?: string | null;
   enforceRecipientAllowlist?: boolean;
@@ -113,8 +115,8 @@ export interface DeployGuardInput {
 export interface DeployGuardOutput {
   zkAppAddress: string;
   zkAppPrivateKey: string;
-  txHash: string;
-  feePayerAddress: string;
+  /** Proven-but-fee-payer-unsigned tx JSON. Client's Auro signs + submits. */
+  transactionJson: string;
 }
 
 /**
@@ -139,8 +141,8 @@ export async function deployGuard(
 
   await ensureCompiled();
 
-  const feePayer = await acquireLightnetFeePayer(config);
-  await fetchAccount({ publicKey: feePayer.pub });
+  const feePayerPub = PublicKey.fromBase58(input.feePayer);
+  await fetchAccount({ publicKey: feePayerPub });
 
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();
@@ -162,9 +164,9 @@ export async function deployGuard(
   const enforceAllowlist = input.enforceRecipientAllowlist ? Field(1) : Field(0);
 
   const tx = await Mina.transaction(
-    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
     async () => {
-      AccountUpdate.fundNewAccount(feePayer.pub);
+      AccountUpdate.fundNewAccount(feePayerPub);
       await zkApp.deploy();
       await zkApp.setup(
         ownerStore.getCommitment(),
@@ -184,17 +186,15 @@ export async function deployGuard(
   await tx.prove();
   console.log(`[tx-service] proved in ${((Date.now() - proveStart) / 1000).toFixed(1)}s`);
 
-  const pending = await tx.sign([feePayer.key, zkAppKey]).send();
-  if (pending.status !== 'pending') {
-    const errors = (pending as { errors?: unknown[] }).errors ?? [];
-    throw new Error(`Submission rejected: ${JSON.stringify(errors)}`);
-  }
+  // The zkApp account needs BOTH its keypair signature (for initial deploy)
+  // AND the fee-payer signature. Backend signs the zkApp key here (we
+  // generated it); client's Auro signs the fee-payer later.
+  tx.sign([zkAppKey]);
 
   return {
     zkAppAddress: zkAppAddress.toBase58(),
     zkAppPrivateKey: zkAppKey.toBase58(),
-    txHash: pending.hash,
-    feePayerAddress: feePayer.pub.toBase58(),
+    transactionJson: tx.toJSON(),
   };
 }
 
@@ -762,9 +762,9 @@ export interface ApproveBackendInput {
 }
 
 export async function approveBackend(
-  config: BackendConfig,
+  _config: BackendConfig,
   input: ApproveBackendInput,
-): Promise<{ txHash: string }> {
+): Promise<{ transactionJson: string }> {
   await ensureCompiled();
   const proposal = buildProposalStruct(input.proposal);
   const approverPk = PublicKey.fromBase58(input.approver);
@@ -776,14 +776,15 @@ export async function approveBackend(
 
   const proposalHash = proposal.hash();
   const currentCount = approvalStore.getCount(proposalHash);
-  const feePayer = await acquireLightnetFeePayer(config);
   const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
-  await fetchAccount({ publicKey: feePayer.pub });
+  // User-pays: the approver pays the fee (same wallet that signed the
+  // proposalHash). Backend only proves; no fee-payer key lives here.
+  await fetchAccount({ publicKey: approverPk });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
 
   const tx = await Mina.transaction(
-    { sender: feePayer.pub, fee: UInt64.from(100_000_000) },
+    { sender: approverPk, fee: UInt64.from(100_000_000) },
     async () => {
       await zkApp.approveProposal(
         proposal,
@@ -798,11 +799,7 @@ export async function approveBackend(
   );
   console.log('[tx-service] proving approve...');
   await tx.prove();
-  const pending = await tx.sign([feePayer.key]).send();
-  if (pending.status !== 'pending') {
-    throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
-  }
-  return { txHash: pending.hash };
+  return { transactionJson: tx.toJSON() };
 }
 
 /**

@@ -219,6 +219,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       owners?: unknown;
       threshold?: unknown;
       networkId?: unknown;
+      feePayer?: unknown;
       delegationKey?: unknown;
       recipientAllowlistRoot?: unknown;
       enforceRecipientAllowlist?: unknown;
@@ -228,12 +229,15 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       : [];
     const threshold = Number(body.threshold);
     const networkId = typeof body.networkId === 'string' ? body.networkId : '';
+    const feePayer = typeof body.feePayer === 'string' ? body.feePayer : '';
     const delegationKey = typeof body.delegationKey === 'string' ? body.delegationKey : null;
     const recipientAllowlistRoot =
       typeof body.recipientAllowlistRoot === 'string' ? body.recipientAllowlistRoot : null;
     const enforceRecipientAllowlist = body.enforceRecipientAllowlist === true;
-    if (!owners.length || !Number.isFinite(threshold) || !networkId) {
-      res.status(400).json({ error: 'owners[], threshold, networkId required' });
+    if (!owners.length || !Number.isFinite(threshold) || !networkId || !feePayer) {
+      res.status(400).json({
+        error: 'owners[], threshold, networkId, feePayer required',
+      });
       return;
     }
     // Lazy-load the tx-service to avoid paying the MinaGuard.compile() boot
@@ -244,6 +248,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         owners,
         threshold,
         networkId,
+        feePayer,
         delegationKey,
         recipientAllowlistRoot,
         enforceRecipientAllowlist,
