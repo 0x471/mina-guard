@@ -22,6 +22,7 @@ import {
   fetchRecipientAliases,
   type RecipientAliasRecord,
 } from '@/lib/api';
+import { explorerTxUrl } from '@/lib/explorer';
 
 type Filter =
   | 'all'
@@ -348,6 +349,18 @@ function ActivityRow({
           {i.memo && (
             <p className="text-xs opacity-70 mt-1 italic">memo: {i.memo}</p>
           )}
+          {explorerTxUrl(i.txHash) && (
+            <a
+              href={explorerTxUrl(i.txHash)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-[11px] text-safe-green hover:underline font-mono mt-1 inline-block"
+              title={i.txHash}
+            >
+              {i.txHash.slice(0, 10)}…{i.txHash.slice(-6)} ↗
+            </a>
+          )}
         </div>
         <div className="text-right shrink-0">
           <p className="font-mono text-sm text-safe-green">
@@ -416,6 +429,24 @@ function ActivityRow({
           {p.approvalCount} approvals
           {p.createdAtBlock != null && ` · block ${p.createdAtBlock}`}
         </p>
+        {(() => {
+          const hash = p.executeTxHash ?? p.createTxHash;
+          const url = explorerTxUrl(hash);
+          if (!hash || !url) return null;
+          return (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-[11px] text-safe-green hover:underline font-mono mt-1 inline-block"
+              title={hash}
+            >
+              {p.executeTxHash ? 'execute' : 'propose'} tx{' '}
+              {hash.slice(0, 10)}…{hash.slice(-6)} ↗
+            </a>
+          );
+        })()}
       </div>
       <div className="text-right shrink-0">
         {p.totalAmount && p.totalAmount !== '0' && (

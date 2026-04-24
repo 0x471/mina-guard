@@ -16,6 +16,7 @@ import {
   assertLedgerReady,
 } from '@/lib/multisigClient';
 import { useAutoExecuteOnThreshold } from '@/lib/useAutoExecuteOnThreshold';
+import { explorerTxUrl } from '@/lib/explorer';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -276,6 +277,8 @@ export default function TransactionDetailPage() {
               )}
             />
             {proposal.memo && <DetailRow label="Memo" value={proposal.memo} />}
+            {proposal.createTxHash && <ExplorerRow label="Propose tx" hash={proposal.createTxHash} />}
+            {proposal.executeTxHash && <ExplorerRow label="Execute tx" hash={proposal.executeTxHash} />}
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>
@@ -393,6 +396,31 @@ function DetailRow({
         </div>
       ) : (
         <span className={`${valueClass} ml-12`}>{value}</span>
+      )}
+    </div>
+  );
+}
+
+/** Shows a tx hash with a direct link to the configured block explorer. */
+function ExplorerRow({ label, hash }: { label: string; hash: string }) {
+  const url = explorerTxUrl(hash);
+  return (
+    <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0 gap-4">
+      <span className="text-sm text-safe-text shrink-0">{label}</span>
+      {url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm font-mono text-safe-green hover:underline truncate max-w-[60%]"
+          title={hash}
+        >
+          {hash.slice(0, 10)}…{hash.slice(-6)} ↗
+        </a>
+      ) : (
+        <span className="text-sm font-mono truncate max-w-[60%]" title={hash}>
+          {hash.slice(0, 10)}…{hash.slice(-6)}
+        </span>
       )}
     </div>
   );
