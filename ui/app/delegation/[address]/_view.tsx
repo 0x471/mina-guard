@@ -10,6 +10,7 @@ import {
   fetchChildren,
   fetchBalance,
   fetchRecipientAliases,
+  fetchSingleKeyDelegations,
   delegateSingleKeyViaBackend,
   type RecipientAliasRecord,
 } from '@/lib/api';
@@ -211,6 +212,18 @@ function DelegationRow({
 }) {
   const c = row.contract;
   const guardAlias = aliasByAddress.get(c.address);
+  // Last single-key rotation time. Multisig-side rotations don't land
+  // here; extending to executeDelegate events is a follow-up.
+  const [lastRotatedAt, setLastRotatedAt] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSingleKeyDelegations(c.address, { limit: 1 }).then((rows) => {
+      if (!cancelled && rows[0]?.createdAt) setLastRotatedAt(rows[0].createdAt);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [c.address, c.delegationNonce]);
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState('');
   const [undelegate, setUndelegate] = useState(false);
@@ -372,6 +385,14 @@ function DelegationRow({
         <div>
           <p className="uppercase opacity-70 mb-1">Rotations so far</p>
           <p className="font-mono">{c.delegationNonce ?? 0}</p>
+          {lastRotatedAt && (
+            <>
+              <p className="uppercase opacity-70 mt-2 mb-0.5">Last rotated</p>
+              <p className="text-[11px] opacity-80" title={new Date(lastRotatedAt).toLocaleString()}>
+                {relativeTime(lastRotatedAt)}
+              </p>
+            </>
+          )}
           <p className="uppercase opacity-70 mt-2 mb-1">Mode</p>
           <p className="font-mono text-[10px]">
             {singleKeyConfigured ? 'single-key + multisig' : 'multisig only'}
@@ -548,6 +569,23 @@ function CreateBPChildCta({ parentAddress }: { parentAddress: string }) {
       )}
     </div>
   );
+}
+
+function relativeTime(isoDate: string): string {
+  const d = new Date(isoDate).getTime();
+  if (!Number.isFinite(d)) return '';
+  const diffMs = Date.now() - d;
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
 }
 
 async function fetchLiveDelegate(address: string): Promise<string | null> {

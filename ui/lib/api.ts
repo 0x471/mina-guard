@@ -223,6 +223,38 @@ export async function delegateSingleKeyViaBackend(params: {
   }
 }
 
+/** Indexed single-key delegation rotation record. */
+export interface SingleKeyDelegationRecord {
+  id: number;
+  delegate: string;
+  nonce: number;
+  blockHeight: number | null;
+  txHash: string | null;
+  createdAt: string;
+}
+
+/** Fetches the most-recent N single-key rotations for a guard, newest first. */
+export async function fetchSingleKeyDelegations(
+  address: string,
+  options?: { limit?: number },
+): Promise<SingleKeyDelegationRecord[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set('limit', String(options.limit));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const data = await getJson<Array<Record<string, unknown>>>(
+    `/api/contracts/${address}/single-key-delegations${qs}`,
+  );
+  if (!data) return [];
+  return data.map((item) => ({
+    id: asNumber(item.id),
+    delegate: asString(item.delegate) ?? '',
+    nonce: asNumber(item.nonce),
+    blockHeight: asNullableNumber(item.blockHeight),
+    txHash: asNullableString(item.txHash),
+    createdAt: asString(item.createdAt) ?? '',
+  }));
+}
+
 /** Indexed inbound transfer record populated by the IncomingPoller. */
 export interface IncomingTransferRecord {
   id: number;
