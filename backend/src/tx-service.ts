@@ -79,6 +79,19 @@ async function ensureCompiled(): Promise<void> {
   await compilePromise;
 }
 
+/**
+ * Loads the operator's memo from the stored Proposal row, so execute-side
+ * txs forward it into Mina.transaction({memo}). Returns `''` when no
+ * memo was set at propose time — safe for Mina's empty-memo path.
+ */
+async function loadProposalMemo(proposalHash: Field): Promise<string> {
+  const row = await prisma.proposal.findFirst({
+    where: { proposalHash: proposalHash.toString() },
+    select: { memo: true },
+  });
+  return row?.memo ?? '';
+}
+
 // NOTE: `acquireLightnetFeePayer` was removed as part of the user-pays
 // pivot — all backend tx endpoints now return proven-but-unsigned tx JSON
 // for the client's wallet to sign + submit. No wallet keys live here.
@@ -275,8 +288,9 @@ export async function executeOwnerChangeBackend(
   await fetchAccount({ publicKey: feePayerPub });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await zkApp.executeOwnerChange(
         proposal,
@@ -305,8 +319,9 @@ export async function executeThresholdChangeBackend(
   await fetchAccount({ publicKey: feePayerPub });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await zkApp.executeThresholdChange(
         proposal,
@@ -334,8 +349,9 @@ export async function executeDelegateBackend(
   await fetchAccount({ publicKey: feePayerPub });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await zkApp.executeDelegate(
         proposal,
@@ -362,8 +378,9 @@ export async function executeAllocateToChildrenBackend(
   await fetchAccount({ publicKey: feePayerPub });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await zkApp.executeAllocateToChildren(
         proposal,
@@ -391,8 +408,9 @@ export async function executeUpdateRecipientAllowlistBackend(
   await fetchAccount({ publicKey: feePayerPub });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await zkApp.executeUpdateRecipientAllowlist(
         proposal,
@@ -430,8 +448,9 @@ export async function executeReclaimToParentBackend(
   await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
   await fetchAccount({ publicKey: childPk });
   const childApp = new MinaGuard(childPk);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await childApp.executeReclaimToParent(
         proposal,
@@ -463,8 +482,9 @@ export async function executeDestroyBackend(
   await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
   await fetchAccount({ publicKey: childPk });
   const childApp = new MinaGuard(childPk);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await childApp.executeDestroy(
         proposal,
@@ -496,8 +516,9 @@ export async function executeEnableChildMultiSigBackend(
   await fetchAccount({ publicKey: PublicKey.fromBase58(parentAddress) });
   await fetchAccount({ publicKey: childPk });
   const childApp = new MinaGuard(childPk);
+  const memoForExecute = await loadProposalMemo(proposalHash);
   const tx = await Mina.transaction(
-    { sender: feePayerPub, fee: UInt64.from(100_000_000) },
+    { sender: feePayerPub, fee: UInt64.from(100_000_000), memo: memoForExecute },
     async () => {
       await childApp.executeEnableChildMultiSig(
         proposal,
