@@ -177,6 +177,54 @@ describe('MinaGuard - Recipient Allowlist', () => {
     expect(getBalance(recipient).sub(before)).toEqual(amount);
   });
 
+  it('rejects multi-receiver transfer when allowlist enforcement is on', async () => {
+    // Companion to the "slot 0 only" design note: when the guard is
+    // enforcing the allowlist, slots 1..N-1 must be empty. Regression
+    // guard in case a future refactor restores multi-slot receivers
+    // without also restoring the multi-witness check.
+    const recipientA = PrivateKey.random().toPublicKey();
+    const recipientB = PrivateKey.random().toPublicKey();
+    await fundAccount(ctx, recipientA);
+    await fundAccount(ctx, recipientB);
+    await applyRecipientChange(
+      ctx,
+      createAddRecipientProposal(recipientA, Field(0), Field(0), ctx.zkAppAddress),
+    );
+
+    // Post-add, check on-chain configNonce (existing tests read 0 because
+    // they use a single allowlist change; the contract's behavior here is
+    // the source of truth, not our expectation).
+    const currentNonce = ctx.zkApp.configNonce.get();
+
+    const amount = UInt64.from(500_000_000);
+    const transfer = createTransferProposal(
+      [
+        new Receiver({ address: recipientA, amount }),
+        new Receiver({ address: recipientB, amount }),
+      ],
+      Field(21),
+      currentNonce,
+      ctx.zkAppAddress,
+    );
+    const hash = await proposeTransaction(ctx, transfer, 0);
+    await approveTransaction(ctx, transfer, 1);
+    await approveTransaction(ctx, transfer, 2);
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(hash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(
+          transfer,
+          approvalWitness,
+          Field(3),
+          buildRecipientAllowlistCheck(transfer, ctx.recipientAllowlistStore, true),
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Allowlist-enforced transfer accepts only receivers[0]');
+  });
+
   it('allocate-to-children bypasses recipient allowlist enforcement', async () => {
     // Build a fake child address (the target doesn't need to be a real guard
     // for this test — we only care the allowlist is not consulted).
