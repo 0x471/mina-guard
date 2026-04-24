@@ -181,11 +181,13 @@ Defined in `constants.ts`:
 - Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot
 - Trust model: clients should independently compute the expected commitment and verify it matches
 
-### Propose (with auto-approve)
+### Propose (separation of duties — no auto-approve)
 
 `propose(proposal, ownerWitness, proposer, signature, voteNullifierWitness, approvalWitness)`
 
-There is only one propose method and it **always auto-approves** as the proposer's first vote:
+There is only one propose method; the proposer's act of proposing does
+**not** count as their vote. Quorum must be reached by at least `threshold`
+distinct approvers (SOD floor):
 
 1. Assert `childMultiSigEnabled == 1` if this is a child guard
 2. Verify proposer is an owner (chain hash witness)
@@ -194,9 +196,13 @@ There is only one propose method and it **always auto-approves** as the proposer
 5. Enforce per-txType propose rules (see TxType table)
 6. Increment `proposalCounter`
 7. Verify proposer's signature over `[proposalHash]`
-8. Check and set vote nullifier (prevents re-proposal)
-9. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
-10. Emit `ProposalEvent`, `MAX_RECEIVERS` `ReceiverEvent`s, and `ApprovalEvent`
+8. Check and set vote nullifier for the proposer (prevents the proposer
+   from also approving — hard SOD)
+9. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER`
+10. Emit `ProposalEvent` + `MAX_RECEIVERS` `ReceiverEvent`s
+
+`setup()` enforces `threshold >= 2` so a single-approval quorum (which
+would collapse SOD into mere signer-check) is rejected at config time.
 
 ### Approve
 
@@ -496,3 +502,57 @@ pre-upgrade proposals under the new VK.
 `SetupEvent` is extended with `delegationKeyHash`, `recipientAllowlistRoot`,
 `enforceRecipientAllowlist` — a breaking schema change that pairs with
 the VK rotation.
+
+---
+
+## Backend enrichment layer (non-contract)
+
+The contract emits what's provable — observable state changes. Two
+pieces of *metadata* are captured off-chain and joined back onto the
+indexed view for UI display:
+
+### Proposal memo capture
+
+Mina user commands carry an optional 32-byte memo. The propose tx does
+— it's what the operator typed into the UI. The contract's propose
+event does not carry it (memo isn't part of the circuit). So the
+indexer, after upserting a `Proposal` row from a propose event, calls
+`fetchTxMemoByHash(chainEvent.txHash)` to retrieve the base58-encoded
+memo from the daemon's bestChain, decodes it via `memo-decode.ts`
+(base58check + sha256×2 checksum + the Mina 34-byte string envelope),
+and stores the UTF-8 string on `Proposal.memo`. Best-effort: memo
+enrichment failures don't block the indexer.
+
+On execute, `executeTransferBackend` reads `Proposal.memo` and forwards
+it into `Mina.transaction({memo})` — so the recipient exchange sees the
+operator's original identification string, not whatever the fee-payer's
+submission-time memo would have been.
+
+### Incoming transfer polling
+
+`IncomingPoller` scans the daemon's bestChain every 15s looking for any
+tx whose accountUpdate/receiver pubkey matches a tracked guard. Handles
+both `userCommands` (mina-signer-style payments) and `zkappCommands`
+(o1js `AccountUpdate.createSigned().send()` always lands as a zkapp
+command — missing this pathway silently drops ALL incoming MINA on
+modern lightnet). Positive balance changes are summed per tracked
+contract and upserted into `IncomingTransfer`, with memo decoded. Keyed
+on `(contractId, txHash)` for idempotency.
+
+### Auth middleware
+
+`/api/*` (except `/health` and `/api/indexer/status`) requires a
+`Bearer` HS256 JWT. The UI's NextAuth `session` callback mints these
+tokens with a 1-hour TTL, signed with `AUTH_JWT_SECRET` (shared
+backend/UI). Claims: `email`, `iat`, `exp`. The middleware verifies
+the signature, expiry, and re-checks `email` against
+`AUTH_ALLOWED_DOMAINS`. Local dev short-circuits on `AUTH_DISABLED=true`.
+
+### Known gaps
+
+- **`executeTransfer` allowlist check is shrunk to slot 0**. The
+  9-witness version caused o1js compile memory exhaustion + deadlock;
+  we shrunk to a single witness as a workaround. This means transfer
+  proposals with non-empty slots 1–8 receivers are NOT allowlist-checked
+  for those slots. Operators must stage multi-receiver transfers as
+  separate single-receiver proposals if the allowlist is enforced.
