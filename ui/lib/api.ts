@@ -67,14 +67,14 @@ export async function deployAndSetupViaBackend(params: {
   owners: string[];
   threshold: number;
   networkId: string;
+  feePayer: string;
   delegationKey?: string | null;
   recipientAllowlistRoot?: string | null;
   enforceRecipientAllowlist?: boolean;
 }): Promise<{
   zkAppAddress: string;
   zkAppPrivateKey: string;
-  txHash: string;
-  feePayerAddress: string;
+  transactionJson: string;
 } | { error: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/deploy-and-setup`, {
@@ -89,8 +89,7 @@ export async function deployAndSetupViaBackend(params: {
     return body as {
       zkAppAddress: string;
       zkAppPrivateKey: string;
-      txHash: string;
-      feePayerAddress: string;
+      transactionJson: string;
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };

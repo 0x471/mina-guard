@@ -154,15 +154,13 @@ function CreateAccountWizard() {
   };
 
   /**
-   * Backend-proving deploy path: no in-browser MinaGuard.compile, no Auro
-   * fee-payer signing. Backend generates the zkApp keypair, fetches a funded
-   * account from the lightnet account manager, proves + submits. Lightnet
-   * only; will error on devnet/mainnet until operator-pays / user-pays modes
-   * land in a follow-up.
+   * User-pays deploy path. Backend proves; Auro signs the fee-payer with the
+   * connected wallet and submits. Backend never touches a fee-payer key.
    */
   const handleDeployViaBackend = async () => {
     const error = validateStep2();
     if (error) { setFormError(error); return; }
+    if (!wallet.address) { setFormError('Connect Auro first — your wallet pays the deploy fee.'); return; }
     setFormError(null);
     void startOperation('Submitting to backend prover…', async (onProgress) => {
       onProgress('Backend compiling + proving (first call may take a while)…');
@@ -170,11 +168,18 @@ function CreateAccountWizard() {
         owners: parsedOwners,
         threshold: Number(threshold),
         networkId: network.networkId,
+        feePayer: wallet.address!,
         delegationKey: delegationKey.trim() || null,
         enforceRecipientAllowlist,
       });
       if ('error' in result) {
         throw new Error(result.error);
+      }
+      onProgress('Signing + submitting with Auro (your wallet pays the fee)…');
+      const { sendTransaction } = await import('@/lib/auroWallet');
+      const txHash = await sendTransaction(result.transactionJson);
+      if (!txHash) {
+        throw new Error('Auro rejected the submission.');
       }
       if (name.trim()) saveAccountName(result.zkAppAddress, name);
       // Persist the server-generated zkApp private key client-side so the
@@ -189,7 +194,7 @@ function CreateAccountWizard() {
         /* private-window or storage disabled — non-fatal */
       }
       router.push(`/accounts/${result.zkAppAddress}?pending=1`);
-      return `Deployed at ${result.zkAppAddress.slice(0, 12)}… (tx ${result.txHash.slice(0, 10)}…)`;
+      return `Deployed at ${result.zkAppAddress.slice(0, 12)}… (tx ${txHash.slice(0, 10)}…)`;
     });
   };
 
