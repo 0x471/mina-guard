@@ -708,9 +708,9 @@ export interface ProposeBackendInput {
 }
 
 export async function proposeBackend(
-  config: BackendConfig,
+  _config: BackendConfig,
   input: ProposeBackendInput,
-): Promise<{ txHash: string; proposalHash: string }> {
+): Promise<{ transactionJson: string; proposalHash: string }> {
   await ensureCompiled();
   const proposal = buildProposalStruct(input.proposal);
   const proposerPk = PublicKey.fromBase58(input.proposer);
@@ -721,15 +721,18 @@ export async function proposeBackend(
   );
 
   const proposalHash = proposal.hash();
-  const feePayer = await acquireLightnetFeePayer(config);
   const guardAddress = PublicKey.fromBase58(input.proposal.guardAddress);
-  await fetchAccount({ publicKey: feePayer.pub });
+  // User-pays model: the proposer's wallet pays the fee. Backend never
+  // signs or submits the tx; it proves and hands the tx JSON back to the
+  // client for Auro to sign + broadcast. Removes the backend-managed
+  // fee-payer / operator-key surface area entirely.
+  await fetchAccount({ publicKey: proposerPk });
   await fetchAccount({ publicKey: guardAddress });
   const zkApp = new MinaGuard(guardAddress);
 
   const tx = await Mina.transaction(
     {
-      sender: feePayer.pub,
+      sender: proposerPk,
       fee: UInt64.from(100_000_000),
       memo: input.memo ?? '',
     },
@@ -746,11 +749,10 @@ export async function proposeBackend(
   );
   console.log('[tx-service] proving propose...');
   await tx.prove();
-  const pending = await tx.sign([feePayer.key]).send();
-  if (pending.status !== 'pending') {
-    throw new Error(`Submission rejected: ${JSON.stringify((pending as { errors?: unknown[] }).errors ?? [])}`);
-  }
-  return { txHash: pending.hash, proposalHash: proposalHash.toString() };
+  return {
+    transactionJson: tx.toJSON(),
+    proposalHash: proposalHash.toString(),
+  };
 }
 
 export interface ApproveBackendInput {
