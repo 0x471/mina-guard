@@ -30,6 +30,8 @@ export interface SerializedProposalRecord {
   recipientCount: number;
   totalAmount: string | null;
   memo: string | null;
+  createTxHash: string | null;
+  executeTxHash: string | null;
 }
 
 type ProposalWithReceivers = Proposal & {
@@ -77,5 +79,7 @@ export function serializeProposalRecord(
     recipientCount: receivers.length,
     totalAmount,
     memo: proposal.memo,
+    createTxHash: proposal.createTxHash,
+    executeTxHash: proposal.executeTxHash,
   };
 }

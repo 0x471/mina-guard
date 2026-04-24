@@ -400,6 +400,7 @@ export class MinaGuardIndexer {
         destination: normalizeDestination(asString(event.destination)),
         childAccount: asNullableAddress(asString(event.childAccount)),
         createdAtBlock: chainEvent.blockHeight,
+        createTxHash: chainEvent.txHash,
         status: 'pending',
       },
       update: {
@@ -576,7 +577,7 @@ export class MinaGuardIndexer {
 
     const local = await prisma.proposal.updateMany({
       where: { contractId, proposalHash },
-      data: { status: 'executed', executedAtBlock },
+      data: { status: 'executed', executedAtBlock, executeTxHash: chainEvent.txHash },
     });
     if (local.count > 0) return;
 
@@ -594,7 +595,7 @@ export class MinaGuardIndexer {
 
     await prisma.proposal.updateMany({
       where: { contractId: parent.id, proposalHash },
-      data: { status: 'executed', executedAtBlock },
+      data: { status: 'executed', executedAtBlock, executeTxHash: chainEvent.txHash },
     });
   }
 
