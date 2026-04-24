@@ -22,7 +22,7 @@ describe('MinaGuard - Delegate', () => {
   it('should delegate to a block producer via multisig', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
 
-    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
+    const proposal = createDelegateProposal(blockProducer, Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
     await approveTransaction(ctx, proposal, 2);
@@ -47,7 +47,7 @@ describe('MinaGuard - Delegate', () => {
   it('should un-delegate (delegate to self) via multisig', async () => {
     // First delegate to someone
     const blockProducer = PrivateKey.random().toPublicKey();
-    const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
+    const proposal1 = createDelegateProposal(blockProducer, Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 1);
     await approveTransaction(ctx, proposal1, 2);
@@ -68,7 +68,7 @@ describe('MinaGuard - Delegate', () => {
     ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
     // Now un-delegate
-    const proposal2 = createUndelegateProposal(Field(1), Field(0), ctx.zkAppAddress);
+    const proposal2 = createUndelegateProposal(Field(2), Field(0), ctx.zkAppAddress);
     const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 1);
     await approveTransaction(ctx, proposal2, 2);
@@ -94,7 +94,7 @@ describe('MinaGuard - Delegate', () => {
 
   it('should reject delegation with insufficient approvals', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
-    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
+    const proposal = createDelegateProposal(blockProducer, Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Only proposer approval exists (threshold = 2)
@@ -116,7 +116,7 @@ describe('MinaGuard - Delegate', () => {
   it('should reject unproposed delegate execution with approvalCount = 0', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal = createDelegateProposal(
-      blockProducer, Field(0), Field(0), ctx.zkAppAddress
+      blockProducer, Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -138,4 +138,3 @@ describe('MinaGuard - Delegate', () => {
     expect(delegateAfter).toEqual(delegateBefore);
   });
 });
-

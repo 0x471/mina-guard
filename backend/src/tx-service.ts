@@ -549,7 +549,7 @@ export interface ProposalInput {
   tokenId: string;
   txType: string;        // Field value as decimal string ("0"=TRANSFER, etc)
   data: string;
-  uid: string;
+  nonce: string;
   configNonce: string;
   expiryBlock: string;
   networkId: string;
@@ -578,7 +578,7 @@ function buildProposalStruct(input: ProposalInput): TransactionProposal {
     tokenId: Field(input.tokenId),
     txType: Field(input.txType),
     data: Field(input.data),
-    uid: Field(input.uid),
+    nonce: Field(input.nonce),
     configNonce: Field(input.configNonce),
     expiryBlock: Field(input.expiryBlock),
     networkId: Field(input.networkId),

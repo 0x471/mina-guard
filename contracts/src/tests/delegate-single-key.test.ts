@@ -374,7 +374,7 @@ describe('MinaGuard - Single-Key Delegate', () => {
 
     // Now run a full multisig delegate to confirm the path still works.
     const blockProducerB = PrivateKey.random().toPublicKey();
-    const proposal = createDelegateProposal(blockProducerB, Field(0), Field(0), ctx.zkAppAddress);
+    const proposal = createDelegateProposal(blockProducerB, Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
     await approveTransaction(ctx, proposal, 2);

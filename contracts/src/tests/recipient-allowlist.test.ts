@@ -66,7 +66,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
 
   it('adds a recipient via multisig proposal', async () => {
     const recipient = PrivateKey.random().toPublicKey();
-    const add = createAddRecipientProposal(recipient, Field(0), Field(0), ctx.zkAppAddress);
+    const add = createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress);
     await applyRecipientChange(ctx, add);
 
     expect(ctx.recipientAllowlistStore.isAllowed(recipient)).toBe(true);
@@ -77,12 +77,12 @@ describe('MinaGuard - Recipient Allowlist', () => {
     const recipient = PrivateKey.random().toPublicKey();
     await applyRecipientChange(
       ctx,
-      createAddRecipientProposal(recipient, Field(0), Field(0), ctx.zkAppAddress),
+      createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress),
     );
 
     await applyRecipientChange(
       ctx,
-      createRemoveRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress),
+      createRemoveRecipientProposal(recipient, Field(2), Field(0), ctx.zkAppAddress),
     );
 
     expect(ctx.recipientAllowlistStore.isAllowed(recipient)).toBe(false);
@@ -93,17 +93,17 @@ describe('MinaGuard - Recipient Allowlist', () => {
     const recipient = PrivateKey.random().toPublicKey();
     await applyRecipientChange(
       ctx,
-      createAddRecipientProposal(recipient, Field(0), Field(0), ctx.zkAppAddress),
+      createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress),
     );
 
-    const again = createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress);
+    const again = createAddRecipientProposal(recipient, Field(2), Field(0), ctx.zkAppAddress);
     await expect(applyRecipientChange(ctx, again))
       .rejects.toThrow('Recipient allowlist entry in wrong state for this op');
   });
 
   it('rejects removing a non-member (remove-non-member)', async () => {
     const stranger = PrivateKey.random().toPublicKey();
-    const remove = createRemoveRecipientProposal(stranger, Field(0), Field(0), ctx.zkAppAddress);
+    const remove = createRemoveRecipientProposal(stranger, Field(1), Field(0), ctx.zkAppAddress);
     await expect(applyRecipientChange(ctx, remove))
       .rejects.toThrow('Recipient allowlist entry in wrong state for this op');
   });
@@ -116,7 +116,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
     const amount = UInt64.from(1_000_000_000);
     const transfer = createTransferProposal(
       [new Receiver({ address: recipient, amount })],
-      Field(10),
+      Field(1),
       Field(0),
       ctx.zkAppAddress,
     );
@@ -147,13 +147,13 @@ describe('MinaGuard - Recipient Allowlist', () => {
     // Approve the recipient first.
     await applyRecipientChange(
       ctx,
-      createAddRecipientProposal(recipient, Field(0), Field(0), ctx.zkAppAddress),
+      createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress),
     );
 
     const amount = UInt64.from(1_000_000_000);
     const transfer = createTransferProposal(
       [new Receiver({ address: recipient, amount })],
-      Field(10),
+      Field(2),
       Field(0),
       ctx.zkAppAddress,
     );
@@ -188,7 +188,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
     await fundAccount(ctx, recipientB);
     await applyRecipientChange(
       ctx,
-      createAddRecipientProposal(recipientA, Field(0), Field(0), ctx.zkAppAddress),
+      createAddRecipientProposal(recipientA, Field(1), Field(0), ctx.zkAppAddress),
     );
 
     // Post-add, check on-chain configNonce (existing tests read 0 because
@@ -202,7 +202,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
         new Receiver({ address: recipientA, amount }),
         new Receiver({ address: recipientB, amount }),
       ],
-      Field(21),
+      Field(2),
       currentNonce,
       ctx.zkAppAddress,
     );
@@ -233,7 +233,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
 
     const allocate = createAllocateChildProposal(
       [new Receiver({ address: childAddress, amount: UInt64.from(500_000_000) })],
-      Field(20),
+      Field(1),
       Field(0),
       ctx.zkAppAddress,
     );
@@ -256,7 +256,7 @@ describe('MinaGuard - Recipient Allowlist', () => {
     const recipient = PrivateKey.random().toPublicKey();
     await applyRecipientChange(
       ctx,
-      createAddRecipientProposal(recipient, Field(0), Field(0), ctx.zkAppAddress),
+      createAddRecipientProposal(recipient, Field(1), Field(0), ctx.zkAppAddress),
     );
 
     const events = await ctx.zkApp.fetchEvents();

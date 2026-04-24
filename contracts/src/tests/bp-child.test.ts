@@ -49,7 +49,7 @@ describe('MinaGuard - Parent/Child for BPs', () => {
       parentCtx.owners.map((o) => o.pub),
       2,
       [0, 1, 2],
-      Field(10),
+      Field(0),
       {
         childDelegationKey: childDelegationKey.toPublicKey(),
         childInitialDelegate: blockProducerA,
@@ -77,7 +77,7 @@ describe('MinaGuard - Parent/Child for BPs', () => {
       parentCtx.owners.map((o) => o.pub),
       2,
       [0, 1, 2],
-      Field(11),
+      Field(0),
       {
         childDelegationKey: childDelegationKey.toPublicKey(),
         childInitialDelegate: blockProducerA,
@@ -121,7 +121,7 @@ describe('MinaGuard - Parent/Child for BPs', () => {
       parentCtx.owners.map((o) => o.pub),
       2,
       [0, 1, 2],
-      Field(12),
+      Field(0),
       {
         childDelegationKey: childDelegationKey.toPublicKey(),
         childInitialDelegate: blockProducerA,
@@ -142,7 +142,7 @@ describe('MinaGuard - Parent/Child for BPs', () => {
 
     const proposal = createDelegateProposal(
       blockProducerC,
-      Field(20),
+      Field(2),
       Field(0),
       childAddress,
       Field(0),

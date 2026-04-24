@@ -82,7 +82,7 @@ runner('MinaGuard - BP scale (M2)', () => {
           parentCtx.owners.map((o) => o.pub),
           2,
           [0, 1, 2],
-          Field(100 + i),
+          Field(0),
           {
             childInitialDelegate: bp,
             childDelegationKey: childDelegationPub,

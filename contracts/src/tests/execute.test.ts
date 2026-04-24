@@ -8,6 +8,7 @@ import {
   approveTransaction,
   buildRecipientAllowlistCheck,
   createTransferProposal,
+  createDeleteProposal,
   fundAccount,
   getBalance,
   makeOwnerWitness,
@@ -32,7 +33,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -61,7 +62,7 @@ describe('MinaGuard - Execute', () => {
   it('should reject execution with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -90,7 +91,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -120,7 +121,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -175,7 +176,7 @@ describe('MinaGuard - Execute', () => {
     const recipient = PrivateKey.random().toPublicKey();
     // Create proposal with wrong configNonce
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(99), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(99), ctx.zkAppAddress
     );
 
     // Can't even propose this since configNonce mismatch happens at propose time
@@ -208,7 +209,7 @@ describe('MinaGuard - Execute', () => {
 
     // 1. Propose and approve a transfer with configNonce=0
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
@@ -257,6 +258,81 @@ describe('MinaGuard - Execute', () => {
     }).toThrow('Config nonce mismatch - governance changed since proposal');
   });
 
+  it('should execute a zero-value transfer: advances nonce, no balance change', async () => {
+    const del = createDeleteProposal(Field(1), Field(0), ctx.zkAppAddress);
+    const proposalHash = await proposeTransaction(ctx, del, 0);
+    await approveTransaction(ctx, del, 1);
+    await approveTransaction(ctx, del, 2);
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
+    const balanceBefore = getBalance(ctx.zkAppAddress);
+
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransfer(
+        del,
+        approvalWitness,
+        Field(3),
+        buildRecipientAllowlistCheck(del, ctx.recipientAllowlistStore, false),
+      );
+    });
+    await executeTxn.prove();
+    await executeTxn.sign([ctx.deployerKey]).send();
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(1));
+    expect(getBalance(ctx.zkAppAddress)).toEqual(balanceBefore);
+  });
+
+  it('should invalidate a competing proposal once the zero-transfer executes (delete flow)', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    // A real transfer and a zero-value "delete" transfer both submitted at nonce 1.
+    const transfer = createTransferProposal(
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
+      Field(1), Field(0), ctx.zkAppAddress,
+    );
+    const del = createDeleteProposal(Field(1), Field(0), ctx.zkAppAddress);
+
+    await proposeTransaction(ctx, transfer, 0);
+    await approveTransaction(ctx, transfer, 1);
+    await approveTransaction(ctx, transfer, 2);
+    const delHash = await proposeTransaction(ctx, del, 0);
+    await approveTransaction(ctx, del, 1);
+    await approveTransaction(ctx, del, 2);
+
+    // Execute the delete-transfer first — it burns nonce 1.
+    const delWitness = ctx.approvalStore.getWitness(delHash);
+    const delTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransfer(
+        del,
+        delWitness,
+        Field(3),
+        buildRecipientAllowlistCheck(del, ctx.recipientAllowlistStore, false),
+      );
+    });
+    await delTxn.prove();
+    await delTxn.sign([ctx.deployerKey]).send();
+    ctx.approvalStore.setCount(delHash, EXECUTED_MARKER);
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(1));
+
+    // The competing transfer now has a stale nonce and can't execute.
+    await expect(async () => {
+      const transferWitness = ctx.approvalStore.getWitness(transfer.hash());
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(
+          transfer,
+          transferWitness,
+          Field(3),
+          buildRecipientAllowlistCheck(transfer, ctx.recipientAllowlistStore, false),
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow();
+  });
+
   it('should allow anyone to trigger execution (not just owners)', async () => {
     const recipientKey = PrivateKey.random();
     const recipient = recipientKey.toPublicKey();
@@ -264,7 +340,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -289,4 +365,3 @@ describe('MinaGuard - Execute', () => {
     expect(received).toEqual(UInt64.from(1_000_000_000));
   });
 });
-
