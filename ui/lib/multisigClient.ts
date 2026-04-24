@@ -199,7 +199,7 @@ export async function createProposalViaBackend(params: {
   progress('Requesting Auro signature...');
   const signed = await getAuroSignFields([proposalHash]);
   if (!signed) throw new Error('User rejected or Auro signature failed');
-  progress('Submitting to backend prover...');
+  progress('Submitting to backend prover (proving step)...');
   const result = await proposeViaBackend({
     proposal: proposalJson as never,
     proposer: params.proposerAddress,
@@ -207,6 +207,17 @@ export async function createProposalViaBackend(params: {
     memo: params.input.memo,
   });
   if ('error' in result) throw new Error(result.error);
+
+  // User-pays: backend returned a proven-but-unsigned tx. Hand off to
+  // Auro, which signs the fee-payer with the connected wallet and
+  // submits to the Mina node. Backend never touches fee-payer keys.
+  progress('Signing + submitting with Auro (your wallet pays the fee)...');
+  const { sendTransaction } = await import('./auroWallet');
+  const txHash = await sendTransaction(result.transactionJson);
+  if (!txHash) {
+    throw new Error('Auro rejected the submission. Try again.');
+  }
+  progress(`Submitted (${txHash.slice(0, 10)}…). Waiting for indexer to pick it up.`);
   return result.proposalHash;
 }
 

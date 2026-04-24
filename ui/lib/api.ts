@@ -121,14 +121,17 @@ export async function proposeViaBackend(params: {
   proposer: string;
   signatureBase58: string;
   memo?: string;
-}): Promise<{ txHash: string; proposalHash: string } | { error: string }> {
+}): Promise<
+  | { transactionJson: string; proposalHash: string }
+  | { error: string }
+> {
   try {
     const response = await fetch(`${API_BASE}/api/tx/propose`, {
       method: 'POST', headers: { ...(await authHeaders()), 'content-type': 'application/json' }, body: JSON.stringify(params),
     });
     const body = await response.json().catch(() => ({ error: 'invalid JSON from backend' }));
     if (!response.ok) return { error: typeof body.error === 'string' ? body.error : `HTTP ${response.status}` };
-    return body as { txHash: string; proposalHash: string };
+    return body as { transactionJson: string; proposalHash: string };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
