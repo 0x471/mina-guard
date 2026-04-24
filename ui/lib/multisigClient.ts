@@ -239,14 +239,18 @@ export async function approveProposalViaBackend(params: {
   progress('Requesting Auro signature...');
   const signed = await getAuroSignFields([proposalHash]);
   if (!signed) throw new Error('User rejected or Auro signature failed');
-  progress('Submitting to backend prover...');
+  progress('Submitting to backend prover (proving step)...');
   const result = await approveViaBackend({
     proposal: proposalJson as never,
     approver: params.approverAddress,
     signatureBase58: typeof signed.signature === 'string' ? signed.signature : '',
   });
   if ('error' in result) throw new Error(result.error);
-  return result.txHash;
+  progress('Signing + submitting with Auro (your wallet pays the fee)...');
+  const { sendTransaction } = await import('./auroWallet');
+  const txHash = await sendTransaction(result.transactionJson);
+  if (!txHash) throw new Error('Auro rejected the submission.');
+  return txHash;
 }
 
 /**
