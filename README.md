@@ -15,6 +15,106 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
 
+## M0 Self-Custody Features
+
+This repo implements the M0 milestone of the self-custody spec (100k MINA
+treasury, 2-of-N approvals, exchange whitelist, staking delegation, OAuth
+dashboard). Each capability:
+
+### Separation of duties (SOD)
+`propose()` no longer auto-approves; quorum requires at least `threshold`
+*distinct* signatures after the proposer. `setup()` enforces `threshold ≥ 2`.
+Tested across all governance paths (145 contract tests pass).
+
+### Single-key staking delegation
+`executeDelegateSingleKey` rotates a guard's staking delegate with one
+signature from the pre-committed `delegationKey`. Enables fast BP rotation
+under incident without multisig quorum. Canonical 7-field signed message;
+monotonic `delegationNonce` prevents replay. Expires at `expiryBlock`
+(0 = no expiry), with a `requireBetween` precondition so in-flight txs
+stay valid when the chain advances between prove and inclusion.
+
+### On-chain recipient allowlist
+`executeUpdateRecipientAllowlist` (ADD/REMOVE, quorum-gated) maintains a
+per-guard Merkle root. `executeTransfer` refuses sends to non-allowlisted
+recipients when `enforceRecipientAllowlist = true`. *Known gap: only
+slot-0 is checked (shrunk from 9 after an o1js compile deadlock).*
+
+### Parent/child-for-BPs architecture (M2-ready)
+`executeSetupChild` binds an `initialDelegate` into the CREATE_CHILD
+proposal hash so the parent's quorum approves the BP choice atomically
+with the child spawn. Scale-validated: an opt-in test (`BP_SCALE=1 bun
+test src/tests/bp-child-scale.test.ts`) spawns 80 children + rotates 40
+in 275s (create: 3.4s/child, rotate: 0.13s/rotate).
+
+### Memo loop end-to-end
+32-byte memo input on the Propose Transfer modal → threaded through the
+propose tx → indexer fetches the tx from the daemon and decodes the
+base58-encoded memo to UTF-8 → stored on `Proposal.memo` → surfaced on
+the proposal detail page and Activity feed. On execute, the transfer tx
+carries the stored memo, so the receiving exchange (Kraken, Coinbase…)
+sees the operator's identification string.
+
+### Recipient aliases (address book)
+Per-guard UI-layer alias table ("Kraken" → `B62q…`). Backend CRUD at
+`/api/contracts/:addr/recipient-aliases`. Shown as clickable chips on
+the propose form. *Not* enforced on-chain — orthogonal to the recipient
+allowlist above.
+
+### Auto-execute on threshold
+`useAutoExecuteOnThreshold` hook: once a proposal's approvalCount ≥
+threshold, any open proposal-detail tab waits a 2s debounce, takes a
+`localStorage[autoExecute:<hash>]` lock, and fires the correct
+`execute*` method via backend proving. `EXECUTED_MARKER` is the final
+on-chain collision safety.
+
+### Proposal expiry UX
+Propose modal defaults `expiryBlock` to `current + 20_000` (≈7 days at
+30s/block) with a live "expires in N blocks (≈X days)" readout. Activity
+feed flags pending-but-expired proposals with a red `Expired` badge.
+Resolves the spec's §4.1 open question about stuck requests.
+
+### Three-tab IA
+Every guard has three routes matching the mockup:
+`/accounts/[addr]` (balance, owners, recent proposals, address book),
+`/activity/[addr]` (filter tabs: All / Pending / Completed / Inbound /
+Outbound / Needs My Signature), `/delegation/[addr]` (BP dashboard
+with filter tabs + per-row rotation modal + Create BP Child wizard).
+
+### Inbound transfer indexing
+`IncomingPoller` scans the daemon's best chain every 15s for both
+`userCommands` and `zkappCommands` targeting tracked guard addresses.
+Positive balance changes become `IncomingTransfer` rows. Memos are
+base58-decoded to UTF-8 via `memo-decode.ts`. Surfaced on the
+Activity tab's Inbound filter.
+
+### Backend-proving model
+The UI does not compile o1js in the browser. All `execute*` /
+`propose` / `approve` / `delegateSingleKey` / `deploy-and-setup` txs
+are built + proved + submitted by the backend. Auro only signs a
+single-Field `proposalHash` (or the canonical 7-field delegation
+message) — works on Ledger too. `tx-service.ts` is the entry point.
+
+### NextAuth Google OAuth
+`@o1labs.org`-allowlisted sign-in via NextAuth; session mints an HS256
+bearer token that the UI's `api.ts` attaches as `Authorization: Bearer`.
+Backend middleware verifies the same signature + re-checks email domain.
+Local dev bypass via `AUTH_DISABLED=true` (backend) +
+`NEXT_PUBLIC_AUTH_DISABLED=true` (UI).
+
+## Dev helpers
+
+```bash
+# Lightnet funding (from dev-helpers/.env keys)
+bun run cli.ts lightnet-fund
+
+# Rotate a guard's staking delegate via single-key (offline operator key)
+bun run cli.ts delegate-single-key
+
+# Send a test payment (exercises the IncomingPoller end-to-end)
+bun run cli.ts send-payment --to B62q… --amount 10 --memo "rebalance"
+```
+
 ## Development
 
 ### First-time setup
