@@ -48,6 +48,12 @@ export default function ProposalForm({
   const [recipientAddress, setRecipientAddress] = useState('');
   const [memo, setMemo] = useState('');
   const memoByteLength = new TextEncoder().encode(memo).length;
+  // Confirmation modal payload. Populated by handleSubmit after validation
+  // passes; operator reviews before we actually hand off to the parent's
+  // onSubmit (which in the backend-proving + user-pays path fires the Auro
+  // prompt). Prevents accidental double-clicks and mis-typed destinations
+  // from firing a signing prompt.
+  const [pendingSubmit, setPendingSubmit] = useState<NewProposalInput | null>(null);
   const [aliases, setAliases] = useState<RecipientAliasRecord[]>([]);
   useEffect(() => {
     if (!contractAddress) return;
@@ -203,7 +209,7 @@ export default function ProposalForm({
       return;
     }
 
-    onSubmit({
+    const payload: NewProposalInput = {
       txType,
       receivers:
         txType === 'transfer' || txType === 'allocateChild'
@@ -228,8 +234,17 @@ export default function ProposalForm({
         txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
       memo: memo.trim() || undefined,
-    });
+    };
+    setPendingSubmit(payload);
   };
+
+  const confirmSubmit = () => {
+    if (!pendingSubmit) return;
+    const payload = pendingSubmit;
+    setPendingSubmit(null);
+    onSubmit(payload);
+  };
+  const cancelConfirm = () => setPendingSubmit(null);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -633,9 +648,149 @@ export default function ProposalForm({
         disabled={isSubmitting}
         className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50"
       >
-        {isSubmitting ? 'Submitting Proposal...' : 'Submit Proposal'}
+        {isSubmitting ? 'Submitting Proposal...' : 'Review & Submit Proposal'}
       </button>
+
+      {pendingSubmit && (
+        <ConfirmActionModal
+          payload={pendingSubmit}
+          currentThreshold={currentThreshold}
+          onConfirm={confirmSubmit}
+          onCancel={cancelConfirm}
+          isSubmitting={isSubmitting}
+        />
+      )}
     </form>
+  );
+}
+
+/**
+ * Review modal shown between Submit click and Auro prompt. Gives the
+ * operator a last look at destination / amount / memo before signing.
+ * Mockup §"Confirm Action" — protects against typos + double-clicks.
+ */
+function ConfirmActionModal({
+  payload,
+  currentThreshold,
+  onConfirm,
+  onCancel,
+  isSubmitting,
+}: {
+  payload: NewProposalInput;
+  currentThreshold: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isSubmitting: boolean;
+}) {
+  const kindLabel: Record<string, string> = {
+    transfer: 'Transfer',
+    addOwner: 'Add Owner',
+    removeOwner: 'Remove Owner',
+    changeThreshold: 'Change Threshold',
+    setDelegate: 'Set Delegate',
+    allocateChild: 'Allocate to Subaccounts',
+    reclaimChild: 'Reclaim from Subaccount',
+    destroyChild: 'Destroy Subaccount',
+    enableChildMultiSig: 'Toggle Subaccount Multi-sig',
+    addRecipient: 'Add Allowed Recipient',
+    removeRecipient: 'Remove Allowed Recipient',
+    createChild: 'Create Subaccount',
+  };
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-safe-dark border border-safe-border rounded-xl p-6 max-w-md w-full space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-bold">Confirm action</h2>
+        <p className="text-sm opacity-80">
+          Review this proposal before it&apos;s submitted to the chain.
+          Your Auro wallet will be asked to sign and pay the fee.
+        </p>
+
+        <dl className="space-y-2 text-sm">
+          <Row label="Type" value={kindLabel[payload.txType] ?? payload.txType} />
+          {payload.receivers && payload.receivers.length > 0 && (
+            <>
+              <Row label="Recipients" value={String(payload.receivers.length)} />
+              <Row
+                label="First recipient"
+                value={payload.receivers[0].address}
+                mono
+              />
+              <Row
+                label="Total MINA"
+                value={payload.receivers
+                  .reduce((n, r) => n + BigInt(r.amount), 0n)
+                  .toString()}
+              />
+            </>
+          )}
+          {payload.newOwner && <Row label="New owner" value={payload.newOwner} mono />}
+          {payload.removeOwnerAddress && (
+            <Row label="Remove owner" value={payload.removeOwnerAddress} mono />
+          )}
+          {payload.newThreshold !== undefined && (
+            <Row label="New threshold" value={String(payload.newThreshold)} />
+          )}
+          {payload.delegate && <Row label="Delegate" value={payload.delegate} mono />}
+          {payload.undelegate && <Row label="Undelegate" value="yes (point stake to self)" />}
+          {payload.recipientAddress && (
+            <Row label="Recipient" value={payload.recipientAddress} mono />
+          )}
+          {payload.childAccount && (
+            <Row label="Subaccount" value={payload.childAccount} mono />
+          )}
+          {payload.reclaimAmount && (
+            <Row label="Reclaim amount (nanomina)" value={payload.reclaimAmount} />
+          )}
+          {payload.memo && <Row label="Memo" value={payload.memo} />}
+          {payload.expiryBlock !== undefined && payload.expiryBlock > 0 && (
+            <Row label="Expires at block" value={String(payload.expiryBlock)} />
+          )}
+        </dl>
+
+        <div className="bg-safe-dark/30 border border-safe-border rounded-lg px-3 py-2 text-xs opacity-80">
+          This request will require <span className="font-semibold text-safe-green">{currentThreshold}</span> {currentThreshold === 1 ? 'approval' : 'approvals'} before execution.
+        </div>
+
+        <div className="flex items-center gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            className="border border-safe-border rounded-lg px-4 py-2 text-sm hover:bg-safe-hover disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isSubmitting}
+            className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 disabled:opacity-50"
+          >
+            {isSubmitting ? 'Submitting…' : 'Confirm & Sign'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex justify-between items-start gap-3">
+      <dt className="text-xs uppercase tracking-wider opacity-70 shrink-0">{label}</dt>
+      <dd
+        className={`text-xs text-right break-all ${mono ? 'font-mono' : ''}`}
+        title={value}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
