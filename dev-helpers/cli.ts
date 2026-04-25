@@ -11,6 +11,7 @@ import { runFundAccounts } from './commands/fund-accounts.ts';
 import { runDelegateSingleKey } from './commands/delegate-single-key.ts';
 import { runSendPayment } from './commands/send-payment.ts';
 import { runLightnetFixture } from './commands/lightnet-fixture.ts';
+import { runSeedScreenshots } from './commands/seed-screenshots.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -141,6 +142,13 @@ async function main(): Promise<void> {
         previewBaseUrl: options.previewBaseUrl,
         scenario: options.scenario,
       });
+    });
+
+  program
+    .command('seed-screenshots')
+    .description('Seed the backend dev DB with mock M0 data so the UI renders fully populated screens for screenshots.')
+    .action(() => {
+      runSeedScreenshots();
     });
 
   await program.parseAsync(process.argv);
