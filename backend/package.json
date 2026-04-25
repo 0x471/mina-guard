@@ -10,7 +10,8 @@
     "start": "bun run db:push && bun dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "db:seed-screenshots": "bun --env-file=.env scripts/seed-screenshots.ts"
   },
   "dependencies": {
     "@prisma/client": "6.12.0",
