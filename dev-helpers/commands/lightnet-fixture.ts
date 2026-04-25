@@ -25,7 +25,10 @@ import {
   TransactionProposal,
   TxType,
   VoteNullifierStore,
+  EMPTY_MERKLE_MAP_ROOT,
+  RecipientAllowlistCheck,
 } from 'contracts';
+import { MerkleMap } from 'o1js';
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
@@ -343,6 +346,9 @@ async function createFixtureContract(
       Field(ownerStore.length),
       NETWORK_ID,
       new SetupOwnersInput({ owners: paddedOwners(ownerStore) }),
+      PublicKey.empty(),
+      EMPTY_MERKLE_MAP_ROOT,
+      Field(0),
     );
     if (fundContractAmount) {
       const update = AccountUpdate.createSigned(deployer.pub);
@@ -440,8 +446,12 @@ async function executeTransfer(
   const approvalWitness = contract.approvalStore.getWitness(proposalHash);
   const zkApp = new MinaGuard(contract.zkAppAddress);
 
+  const emptyAllowlistCheck = new RecipientAllowlistCheck({
+    witness0: new MerkleMap().getWitness(Field(0)),
+    value0: Field(0),
+  });
   const tx = await Mina.transaction({ sender: feePayer.pub, fee: TX_FEE }, async () => {
-    await zkApp.executeTransfer(proposal, approvalWitness, approvalCount);
+    await zkApp.executeTransfer(proposal, approvalWitness, approvalCount, emptyAllowlistCheck);
   });
 
   await submitTransaction(label, tx, [feePayer.key]);
